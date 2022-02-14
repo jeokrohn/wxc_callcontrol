@@ -8,7 +8,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional, Dict, Union, Type
 
+import backoff
 import flask
+from itertools import chain
 import requests
 from dotenv import load_dotenv
 from webexteamsbot import TeamsBot
@@ -20,6 +22,8 @@ from wx_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource
 from abc import ABC, abstractmethod
 import yaml
 from concurrent.futures import ThreadPoolExecutor
+
+from functools import wraps
 
 log = logging.getLogger(__name__)
 
@@ -238,6 +242,19 @@ class UserContext(BaseModel):
     tokens: Tokens
 
 
+def catch_exception(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            f(*args, **kwargs)
+        except Exception as e:
+            arg_string = ', '.join(chain((f'{v}' for v in args), (f'{k}={v}' for k, v in kwargs.items())))
+            log.error(f'{f.__name__}({arg_string}) failed: {e}')
+            raise
+
+    return wrapper
+
+
 class CallControlBot(TeamsBot):
     def __init__(self,
                  *,
@@ -259,6 +276,8 @@ class CallControlBot(TeamsBot):
         self.add_command('/auth', 'authenticate user', self.auth_callback)
         self.add_command('/monitor', 'turn call event monitoring on ot off', self.monitor_callback)
         self.add_command('/dial', 'dial a number', self.dial_callback)
+        self.add_command('/answer', 'answer alerting call', self.answer_callback)
+        self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
 
         self._config_backend = ConfigYML(config_id='event_monitor')
         self._user_context_registry: Dict[str, UserContext] = dict()
@@ -305,8 +324,8 @@ class CallControlBot(TeamsBot):
             event = TelephonyEvent.parse_obj(json_data)
             call = event.data
             self.teams.messages.create(toPersonId=user_id, markdown="Call Event:\n```\n" +
-                                                                  json.dumps(json.loads(call.json()),
-                                                                             indent=2)) + "\n```"
+                                                                    json.dumps(json.loads(call.json()),
+                                                                               indent=2)) + "\n```"
 
         # actually handle in dedicated thread to avoid lock-up
         if self.get_user_context(user_id=user_id):
@@ -418,6 +437,11 @@ class CallControlBot(TeamsBot):
         return ''
 
     def dial_callback(self, message: Message):
+        """
+        /dial command
+        :param message:
+        :return:
+        """
         line = message.text.split()
         if len(line) != 2:
             return 'Usage: /dial <dial string>'
@@ -427,7 +451,82 @@ class CallControlBot(TeamsBot):
         with WebexSimpleApi(tokens=user_context.tokens) as api:
             number = line[1]
             api.telephony.dial(destination=number)
-        return
+        return f'Calling {number}...'
+
+    def answer_callback(self, message: Message):
+        """
+        /answer command
+        :param message:
+        :return:
+        """
+        line = message.text.split()
+        if len(line) != 1:
+            return 'Usage: /answer'
+        user_context = self.get_user_context(user_id=message.personId)
+        if user_context is None:
+            return f'User {message.personEmail} not authenticated. Use /auth command first'
+
+        @catch_exception
+        def answer_call(user_id: str):
+            user_context = self.get_user_context(user_id=user_id)
+            with WebexSimpleApi(tokens=user_context.tokens) as api:
+                # list calls
+                calls = api.telephony.list_calls()
+                # find call in 'alerting'
+                alerting_call = next((c for c in calls if c.state == 'alerting'), None)
+                if alerting_call is None:
+                    self._call_event_exec.submit(self.teams.messages.create, toPersonId=user_id,
+                                                 text='No call in "alerting"')
+                    return
+                # answer that call
+                self._call_event_exec.submit(self.teams.messages.create,
+                                             toPersonId=user_id,
+                                             text=f'answering call from {alerting_call.remote_party.name}'
+                                                  f'({alerting_call.remote_party.number})')
+                self._call_event_exec.submit(api.telephony.answer, call_id=alerting_call.call_id)
+            return
+
+        # answer_call(user_id=message.personId)
+        # submit thread to actually answer the call
+        self._call_event_exec.submit(answer_call, user_id=message.personId)
+        return ''
+
+    def hangup_callback(self, message: Message):
+        """
+        /hangup command
+        :param message:
+        :return:
+        """
+        line = message.text.split()
+        if len(line) != 1:
+            return 'Usage: /hangup'
+        user_context = self.get_user_context(user_id=message.personId)
+        if user_context is None:
+            return f'User {message.personEmail} not authenticated. Use /auth command first'
+
+        @catch_exception
+        def hangup_call(user_id: str):
+            user_context = self.get_user_context(user_id=user_id)
+            with WebexSimpleApi(tokens=user_context.tokens) as api:
+                # list calls
+                calls = api.telephony.list_calls()
+                # find call in 'connected'
+                connected_call = next((c for c in calls if c.state == 'connected'), None)
+                if connected_call is None:
+                    self._call_event_exec.submit(self.teams.messages.create, toPersonId=user_id,
+                                                 text='No connected call')
+                    return
+                # hang up that call
+                self._call_event_exec.submit(self.teams.messages.create,
+                                             toPersonId=user_id,
+                                             text=f'hanging up call from {connected_call.remote_party.name}'
+                                                  f'({connected_call.remote_party.number})')
+                self._call_event_exec.submit(api.telephony.hangup, call_id=connected_call.call_id)
+            return
+
+        # submit thread to actually hang up the call
+        self._call_event_exec.submit(hangup_call, user_id=message.personId)
+        return ''
 
 
 # determine public URL for Bot

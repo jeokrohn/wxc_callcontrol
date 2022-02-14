@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Optional, List, Literal, Type, Union
 
 import backoff
+import requests
 from pydantic import BaseModel, Field
 from requests import Session, HTTPError, Response
 
@@ -197,10 +198,8 @@ class CallState(str, Enum):
     disconnected = 'disconnected'
 
 
-class TelephonyEventData(ApiModel):
-    event_type: str
-    event_timestamp: datetime.datetime
-    call_id: str
+class TelephonyCall(ApiModel):
+    call_id: Optional[str] = Field(alias='id')
     call_session_id: str
     personality: Personality
     state: CallState
@@ -212,6 +211,11 @@ class TelephonyEventData(ApiModel):
     recall: Optional[Recall]
     recording_state: Optional[RecordingState]
     disconnected: Optional[datetime.datetime]
+
+
+class TelephonyEventData(TelephonyCall):
+    event_type: str
+    event_timestamp: datetime.datetime
 
 
 class TelephonyEvent(ApiModel):
@@ -337,6 +341,19 @@ class TelephonyAPI(ApiChild):
         ep = self.ep('calls/dial')
         self._api.post(ep, json={'destination': destination})
 
+    def answer(self, call_id: str):
+        ep = self.ep('calls/answer')
+        self._api.post(ep, json={'callId': call_id})
+
+    def hangup(self, call_id: str):
+        ep = self.ep('calls/hangup')
+        self._api.post(ep, json={'callId': call_id})
+
+    def list_calls(self) -> List[TelephonyCall]:
+        ep = self.ep('calls')
+        calls = self._api.follow_pagination(url=ep, model=TelephonyCall)
+        return calls
+
 
 class WebexSimpleApi:
     base = 'https://webexapis.com/v1'
@@ -363,13 +380,14 @@ class WebexSimpleApi:
     @backoff.on_exception(backoff.constant, HTTPError, interval=0, giveup=giveup_429)
     def _request_w_response(self, method: str, *args, headers=None, **kwargs):
         headers = headers or dict()
-        headers.update({'Authorization': f'Bearer {self._tokens.access_token}'})
+        headers.update({'Authorization': f'Bearer {self._tokens.access_token}',
+                        'Content-type': 'application/json;charset=utf-8'})
         with self._session.request(method, *args, headers=headers, **kwargs) as response:
             response.raise_for_status()
             ct = response.headers.get('Content-Type')
             if not ct:
                 data = ''
-            elif ct.startswith('application/json'):
+            elif ct.startswith('application/json') and response.text:
                 data = response.json()
             else:
                 data = response.text
@@ -380,13 +398,13 @@ class WebexSimpleApi:
         return data
 
     def get(self, *args, **kwargs):
-        return self._request('GET',  *args, **kwargs)
+        return self._request('GET', *args, **kwargs)
 
     def post(self, *args, **kwargs):
         return self._request('POST', *args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        return self._request('DELETE',  *args, **kwargs)
+        return self._request('DELETE', *args, **kwargs)
 
     def follow_pagination(self, *, url: str, model: Type[ApiModel]) -> List[ApiModel]:
         """
