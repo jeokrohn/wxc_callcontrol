@@ -3,7 +3,7 @@
 # client ID for integration to be used. needs scopes as defined in class event_monitor.Integration
 WXC_CC_INTEGRATION_CLIENT_ID=
 
-# client secret of integraion
+# client secret of integration
 WXC_CC_INTEGRATION_CLIENT_SECRET=
 
 # bot email address

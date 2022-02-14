@@ -258,6 +258,7 @@ class CallControlBot(TeamsBot):
                          debug=debug, **kwargs)
         self.add_command('/auth', 'authenticate user', self.auth_callback)
         self.add_command('/monitor', 'turn call event monitoring on ot off', self.monitor_callback)
+        self.add_command('/dial', 'dial a number', self.dial_callback)
 
         self._config_backend = ConfigYML(config_id='event_monitor')
         self._user_context_registry: Dict[str, UserContext] = dict()
@@ -267,7 +268,7 @@ class CallControlBot(TeamsBot):
         self._redirect_handler.register_flask(app=self)
         self._integration = Integration(client_id=client_id, client_secret=client_secret)
         self._call_event_exec = ThreadPoolExecutor()
-        # add a view function for call call events
+        # add a view function for call events
         self.add_url_rule('/callevent/<user_id>', endpoint='callevent', view_func=self.call_event, methods=('POST',))
 
     def get_user_contexts(self):
@@ -281,7 +282,7 @@ class CallControlBot(TeamsBot):
 
     def call_event_url(self, user_id: str) -> str:
         """
-        USer specific call event URL
+        User specific call event URL
         :param user_id:
         :return:
         """
@@ -415,6 +416,18 @@ class CallControlBot(TeamsBot):
                 # turn monitoring off
                 pass
         return ''
+
+    def dial_callback(self, message: Message):
+        line = message.text.split()
+        if len(line) != 2:
+            return 'Usage: /dial <dial string>'
+        user_context = self.get_user_context(user_id=message.personId)
+        if user_context is None:
+            return f'User {message.personEmail} not authenticated. Use /auth command first'
+        with WebexSimpleApi(tokens=user_context.tokens) as api:
+            number = line[1]
+            api.telephony.dial(destination=number)
+        return
 
 
 # determine public URL for Bot

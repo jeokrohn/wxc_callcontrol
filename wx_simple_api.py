@@ -329,6 +329,15 @@ def giveup_429(e: HTTPError):
     return False
 
 
+class TelephonyAPI(ApiChild):
+    def ep(self, path: str):
+        return super().ep(f'telephony/{path}')
+
+    def dial(self, destination: str):
+        ep = self.ep('calls/dial')
+        self._api.post(ep, json={'destination': destination})
+
+
 class WebexSimpleApi:
     base = 'https://webexapis.com/v1'
 
@@ -340,6 +349,7 @@ class WebexSimpleApi:
         self._session = Session()
         self.people = PeopleApi(api=self)
         self.webhook = WebhookApi(api=self)
+        self.telephony = TelephonyAPI(api=self)
 
     def close(self):
         self._session.close()
