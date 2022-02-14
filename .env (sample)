@@ -1,0 +1,16 @@
+# rename this to .env and set values
+
+# client ID for integration to be used. needs scopes as defined in class event_monitor.Integration
+WXC_CC_INTEGRATION_CLIENT_ID=
+
+# client secret of integraion
+WXC_CC_INTEGRATION_CLIENT_SECRET=
+
+# bot email address
+WXC_CC_BOT_EMAIL=
+
+# bot access token
+WXC_CC_BOT_ACCESS_TOKEN=
+
+# bot name
+WXC_CC_BOT_NAME=

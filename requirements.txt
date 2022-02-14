@@ -1,0 +1,10 @@
+pydantic
+python-dotenv
+pyyaml
+requests
+pytz
+webexteamssdk
+backoff
+flask
+webexteamsbot
+gunicorn

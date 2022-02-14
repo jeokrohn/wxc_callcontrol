@@ -1,0 +1,21 @@
+
+services:
+  ngrok:
+    image: ngrok/ngrok
+    ports:
+      # expose ngrok client interface to host
+      - 4040:4040
+    depends_on:
+      - event_monitor
+    # redirect traffic to event_monitor service
+    command: ["http", "event_monitor:6001"]
+
+  event_monitor:
+    build: .
+    ports:
+      # need to expose port 6001 to allow direct GET from local browser at end of auth flow
+      - 6001:6001
+    environment:
+      # inform bot of ngrok instance
+      - NGROK_HOST=ngrok
+    command: gunicorn event_monitor:bot -b :6001
