@@ -5,25 +5,24 @@ import os
 import threading
 import urllib.parse
 import uuid
+from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import wraps
+from itertools import chain
 from typing import Optional, Dict, Union, Type
 
-import backoff
 import flask
-from itertools import chain
 import requests
+import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel
 from webexteamsbot import TeamsBot
 from webexteamssdk import Message, WebexTeamsAPI, Person
-from pydantic import BaseModel
+
 import ngrokhelper
 from tokens import Tokens
 from wx_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource
-from abc import ABC, abstractmethod
-import yaml
-from concurrent.futures import ThreadPoolExecutor
-
-from functools import wraps
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +185,8 @@ class RedirectHandler:
         code = query.get('code', [None])[0]
         flow_id = query.get('state', [None])[0]
 
+        if not all((code, flow_id)):
+            return ''
         # is this a registered flow?
         with self._flow_registry_lock:
             flow_info = self._flow_registry.get(flow_id)
@@ -193,7 +194,7 @@ class RedirectHandler:
                 log.warning(f'Got redirect for unknown flow id: {flow_id}')
                 return 'Unknown flow...'
             flow_info: threading.Event
-            # set code as result for this flow and mark as done
+            # set code as result for this flow and mark as done .. someone is waiting for the event
             self._flow_registry[flow_id] = code
             flow_info.set()
         return 'Authenticated'
@@ -248,7 +249,8 @@ def catch_exception(f):
         try:
             f(*args, **kwargs)
         except Exception as e:
-            arg_string = ', '.join(chain((f'{v}' for v in args), (f'{k}={v}' for k, v in kwargs.items())))
+            arg_string = ', '.join(chain((f'{v}' for v in args),
+                                         (f'{k}={v}' for k, v in kwargs.items())))
             log.error(f'{f.__name__}({arg_string}) failed: {e}')
             raise
 
@@ -273,6 +275,7 @@ class CallControlBot(TeamsBot):
                                          'cbarr@tmedemo.com',
                                          'shewitt@tmedemo.com'],
                          debug=debug, **kwargs)
+        # our commands
         self.add_command('/auth', 'authenticate user', self.auth_callback)
         self.add_command('/monitor', 'turn call event monitoring on ot off', self.monitor_callback)
         self.add_command('/dial', 'dial a number', self.dial_callback)
@@ -287,6 +290,7 @@ class CallControlBot(TeamsBot):
         self._redirect_handler.register_flask(app=self)
         self._integration = Integration(client_id=client_id, client_secret=client_secret)
         self._call_event_exec = ThreadPoolExecutor()
+
         # add a view function for call events
         self.add_url_rule('/callevent/<user_id>', endpoint='callevent', view_func=self.call_event, methods=('POST',))
 
@@ -323,6 +327,7 @@ class CallControlBot(TeamsBot):
             """
             event = TelephonyEvent.parse_obj(json_data)
             call = event.data
+            # simply post a message with the call info
             self.teams.messages.create(toPersonId=user_id, markdown="Call Event:\n```\n" +
                                                                     json.dumps(json.loads(call.json()),
                                                                                indent=2)) + "\n```"
@@ -346,14 +351,6 @@ class CallControlBot(TeamsBot):
         :param message:
         :return:
         """
-        # check if we still have valid tokens for user
-        # initiate auth flow if needed
-        #   * return auth message to user
-        # run thread waiting for oauth flow completion
-        #   * thread waits for code and adds tokens to cache
-        user_email = message.personEmail
-        user_id = message.personId
-        user_context = self.get_user_context(user_id=user_id)
 
         def authenticate():
             """
@@ -395,13 +392,25 @@ class CallControlBot(TeamsBot):
                                             f'{tokens.expires_at} ({flow_id})')
             return
 
+        # check if we still have valid tokens for user
+        # initiate auth flow if needed
+        #   * return auth message to user
+        # run thread waiting for oauth flow completion
+        #   * thread waits for code and adds tokens to cache
+        user_email = message.personEmail
+        user_id = message.personId
+        user_context = self.get_user_context(user_id=user_id)
         if not user_context:
-            thread = threading.Thread(target=authenticate)
-            thread.start()
+            threading.Thread(target=authenticate).start()
             return f'No user context for {user_email}'
         return f'User context for {user_email}: access token valid until {user_context.tokens.expires_at}'
 
     def monitor_callback(self, message: Message):
+        """
+        /monitor commamd
+        :param message:
+        :return:
+        """
         line = message.text.split()
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
             return 'usage: /monitor on|off'
@@ -409,31 +418,24 @@ class CallControlBot(TeamsBot):
         if user_context is None:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
+            # delete all existing webhooks for this user
+            webhooks = api.webhook.list()
+            webhooks = [wh for wh in webhooks
+                        if wh.app_id_uuid == self._integration.client_id and
+                        wh.resource == WebHookResource.telephony_calls and
+                        wh.target_url.endswith(message.personId)]
+            if webhooks:
+                # delete all of them
+                list(self._call_event_exec.map(lambda wh: api.webhook.webhook_delete(webhook_id=wh.webhook_id),
+                                               webhooks))
+
             if line[1] == 'on':
                 # turn monitoring on
-                # delete existing telephony_calls webhooks created by us
-                # create/update webhook for telephony event for the current user
-                webhooks = api.webhook.list()
-                webhooks = [wh for wh in webhooks
-                            if wh.app_id_uuid == self._integration.client_id and
-                            wh.resource == WebHookResource.telephony_calls]
-                if webhooks:
-                    with ThreadPoolExecutor() as ex:
-                        list(ex.map(lambda wh: api.webhook.webhook_delete(webhook_id=wh.webhook_id), webhooks))
-
-                me = api.people.me()
-                # only look at the
-                webhook = None
-                if webhook is None:
-                    webhook = api.webhook.create(name=str(uuid.uuid4()),
-                                                 target_url=self.call_event_url(user_id=message.personId),
-                                                 resource='telephony_calls',
-                                                 event='all')
-                    wh_list = api.webhook.list()
-                    print(json.dumps([json.loads(wh.json()) for wh in wh_list], indent=2))
-            else:
-                # turn monitoring off
-                pass
+                # create webhook for telephony event for the current user
+                api.webhook.create(name=str(uuid.uuid4()),
+                                   target_url=self.call_event_url(user_id=message.personId),
+                                   resource='telephony_calls',
+                                   event='all')
         return ''
 
     def dial_callback(self, message: Message):
