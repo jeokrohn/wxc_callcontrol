@@ -1,4 +1,4 @@
-# Play with the Wexex Calling Call Control APIs
+# Play with the Webex Calling Call Control APIs
 
 Bot as test environment. 
 
@@ -10,3 +10,6 @@ locally and an ngork process is started as required.
 To avoid installing ngrok locally instead the bot can run in Docker. To start the bot use: `docker-compose up`.
 
 The required Docker images are then built/downloaded before starting a bot container and an ngrok container.
+
+To monitor webhook messages point browser to localhost:4040 when ngrok is running (either directly ot the ngrok
+Docker container).
