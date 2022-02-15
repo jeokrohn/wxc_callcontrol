@@ -318,6 +318,7 @@ class CallControlBot(TeamsBot):
         :return:
         """
 
+        @catch_exception
         def thread_handle(user_id: str, json_data: str):
             """
             Actually handle a call event, runs in separate thread
@@ -330,7 +331,7 @@ class CallControlBot(TeamsBot):
             # simply post a message with the call info
             self.teams.messages.create(toPersonId=user_id, markdown="Call Event:\n```\n" +
                                                                     json.dumps(json.loads(call.json()),
-                                                                               indent=2)) + "\n```"
+                                                                               indent=2) + "\n```")
 
         # actually handle in dedicated thread to avoid lock-up
         if self.get_user_context(user_id=user_id):
@@ -485,7 +486,7 @@ class CallControlBot(TeamsBot):
                                              toPersonId=user_id,
                                              text=f'answering call from {alerting_call.remote_party.name}'
                                                   f'({alerting_call.remote_party.number})')
-                self._call_event_exec.submit(api.telephony.answer, call_id=alerting_call.call_id)
+                self._call_event_exec.submit(catch_exception(api.telephony.answer), call_id=alerting_call.call_id)
             return
 
         # answer_call(user_id=message.personId)
@@ -523,7 +524,7 @@ class CallControlBot(TeamsBot):
                                              toPersonId=user_id,
                                              text=f'hanging up call from {connected_call.remote_party.name}'
                                                   f'({connected_call.remote_party.number})')
-                self._call_event_exec.submit(api.telephony.hangup, call_id=connected_call.call_id)
+                self._call_event_exec.submit(catch_exception(api.telephony.hangup), call_id=connected_call.call_id)
             return
 
         # submit thread to actually hang up the call

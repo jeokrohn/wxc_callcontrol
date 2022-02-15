@@ -8,7 +8,7 @@ services:
     depends_on:
       - event_monitor
     # redirect traffic to event_monitor service
-    # command: http event_monitor:6001 --log stderr --log-level info
+    # command: http event_monitor:6001 --log stderr --log-level debug
     command: http event_monitor:6001
 
   event_monitor:
@@ -19,4 +19,6 @@ services:
     environment:
       # inform bot of ngrok instance
       - NGROK_HOST=ngrok
+    volumes:
+      - ./event_monitor.yml:/app/event_monitor.yml
     command: gunicorn event_monitor:bot -b :6001

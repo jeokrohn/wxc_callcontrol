@@ -57,7 +57,7 @@ class ApiModel(BaseModel):
     class Config:
         alias_generator = to_camel
         allow_population_by_field_name = True
-        extra = allow = 'allow'
+        extra = 'allow'
         # set to forbid='forbid' to raise exceptions on schema error
 
     def json(self, *args, exclude_unset=True, by_alias=True, **kwargs) -> str:
@@ -199,7 +199,16 @@ class CallState(str, Enum):
 
 
 class TelephonyCall(ApiModel):
-    call_id: Optional[str] = Field(alias='id')
+    # In events the property is "callId"
+    id_call_id: Optional[str] = Field(alias='callId')
+    # ..while the telephony API uses "id"
+    id_id: Optional[str] = Field(alias='id')
+
+    # .. but this should handle that
+    @property
+    def call_id(self) -> Optional[str]:
+        return self.id_id or self.id_call_id
+
     call_session_id: str
     personality: Personality
     state: CallState
