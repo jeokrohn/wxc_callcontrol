@@ -11,6 +11,14 @@ services:
     # command: http event_monitor:6001 --log stderr --log-level debug
     command: http event_monitor:6001
 
+  redis:
+      image: redis:alpine
+      ports:
+        - 6379:6379
+      volumes:
+        - .:/data
+      command: redis-server --save 60 1
+
   event_monitor:
     build: .
     ports:
@@ -19,6 +27,7 @@ services:
     environment:
       # inform bot of ngrok instance
       - NGROK_HOST=ngrok
+      - REDIS_HOST=redis
     volumes:
       - ./event_monitor.yml:/app/event_monitor.yml
     command: gunicorn event_monitor:bot -b :6001

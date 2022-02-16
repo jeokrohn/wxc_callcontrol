@@ -141,4 +141,5 @@ cython_debug/
 .idea
 TODO
 NOTES
-event_monitor.yml
+wxc_cc_bot.yml
+/dump.rdb

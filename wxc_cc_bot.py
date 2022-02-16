@@ -263,6 +263,22 @@ def catch_exception(f):
 
     return wrapper
 
+class UserContextRegistry:
+    def __init__(self):
+        # read cache from local file
+        # .. or set up redis connection
+        pass
+
+    def get_context(self, user_id:str):
+        # read form local cachee
+        # .. or from redis
+        pass
+
+    def update_context(self, user_id:str, context:UserContext):
+        # update local cache
+        # .. and write cache to disk
+        # .. or update key in redis
+        pass
 
 class CallControlBot(TeamsBot):
     def __init__(self,

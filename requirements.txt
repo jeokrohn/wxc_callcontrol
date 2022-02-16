@@ -8,3 +8,4 @@ backoff
 flask
 webexteamsbot
 gunicorn
+redis
