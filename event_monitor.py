@@ -87,9 +87,16 @@ class Integration:
     scopes = 'spark:calls_write spark:all spark:kms spark:calls_read spark-admin:telephony_config_read ' \
              'spark-admin:telephony_config_write spark-admin:people_read'
     # scopes = 'spark:people_read spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read'
-    redirect_url = 'http://localhost:6001/redirect'
     auth_service = 'https://webexapis.com/v1/authorize'
     token_service = 'https://webexapis.com/v1/access_token'
+
+    @property
+    def redirect_url(self) -> str:
+        # redirect URL is either local or to heroku
+        heroku_name = os.getenv('HEROKU_NAME')
+        if heroku_name:
+            return f'https://{heroku_name}.herokuapp.com/redirect'
+        return 'http://localhost:6001/redirect'
 
     def auth_url(self, *, state: str) -> str:
         params = {
@@ -536,7 +543,6 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(process)d] %(thr
                                                 'message)s')
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 logging.getLogger('webexteamssdk.restsession').setLevel(logging.WARNING)
-
 
 # determine public URL for Bot
 
