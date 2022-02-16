@@ -532,8 +532,22 @@ class CallControlBot(TeamsBot):
         return ''
 
 
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(process)d] %(threadName)s %(levelname)s %(name)s %('
+                                                'message)s')
+logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
+logging.getLogger('webexteamssdk.restsession').setLevel(logging.WARNING)
+
+
 # determine public URL for Bot
-bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
+
+heroku_name = os.getenv('HEROKU_NAME')
+if heroku_name is None:
+    log.debug('not running on Heroku. Creating Ngrok tunnel')
+    bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
+else:
+    log.debug(f'running on heroku as {heroku_name}')
+    bot_url = f'https://{heroku_name}.herokuapp.com'
+log.debug(f'Webhook URL: {bot_url}')
 
 # Create a new bot
 bot_email = os.getenv('WXC_CC_BOT_EMAIL')
