@@ -1,1 +1,1 @@
-web: gunicorn event_monitor:bot --log-file -
+web: gunicorn wxc_cc_bot:bot --log-file -
