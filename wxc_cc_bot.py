@@ -146,6 +146,9 @@ class RedisTokenManager(TokenManager):
             url = urllib.parse.urlparse(os.environ.get("REDIS_URL"))
             self.redis = redis.Redis(host=url.hostname, port=url.port, username=url.username, password=url.password,
                                      ssl=True, ssl_cert_reqs=None)
+        log.debug('get(test)')
+        self.redis.get('test')
+        log.debug('got(test)')
 
     def close(self):
         # close redis connection
