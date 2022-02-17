@@ -454,11 +454,18 @@ class CallControlBot(TeamsBot):
         :return:
         """
 
-        def authenticate(user_id: str):
+        def authenticate(user_id: str, user_email:str):
             """
             Authenticate sender of /auth command
             :return:
             """
+            user_context = self._token_manager.get_user_context(user_id=user_id)
+            if user_context:
+                self.teams.messages.create(toPersonId=user_id,
+                                           text=f'User context for {user_email}: access token valid until {user_context.tokens.expires_at}')
+                return
+            self.teams.messages.create(toPersonId=user_id, text=f'No user context for {user_email}')
+
             # register auth flow and get flow id
             flow_id = self._token_manager.start_flow(user_id=user_id)
 
@@ -475,11 +482,9 @@ class CallControlBot(TeamsBot):
         #   * thread waits for code and adds tokens to cache
         user_email = message.personEmail
         user_id = message.personId
-        user_context = self._token_manager.get_user_context(user_id=user_id)
-        if not user_context:
-            self._thread_pool.submit(authenticate, user_id=user_id)
-            return f'No user context for {user_email}'
-        return f'User context for {user_email}: access token valid until {user_context.tokens.expires_at}'
+        self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
+        return ''
+
 
     def monitor_callback(self, message: Message):
         """
