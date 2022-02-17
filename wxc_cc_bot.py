@@ -226,8 +226,10 @@ class RedisTokenManager(TokenManager):
         :param user_id:
         :return:
         """
-        redid_key = f'user-{user_id}'
-        user_context_json = self.redis.get(redid_key)
+        redis_key = f'user-{user_id}'
+        log.debug(f'get_user_context: get({redis_key})')
+        user_context_json = self.redis.get(redis_key)
+        log.debug(f'get_user_context: got({redis_key}) -> {user_context_json}')
         if not user_context_json:
             return None
         try:
