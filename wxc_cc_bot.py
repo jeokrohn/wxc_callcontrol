@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
+import datetime
 import json
 import logging
 import os
-import threading
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
@@ -10,15 +10,17 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import wraps
 from itertools import chain
-from typing import Optional, Dict, Union, Type
+from typing import Optional
 
 import flask
+import pydantic
+import pytz
+import redis
 import requests
-import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from webexteamsbot import TeamsBot
-from webexteamssdk import Message, WebexTeamsAPI, Person
+from webexteamssdk import Message, WebexTeamsAPI
 
 import ngrokhelper
 from tokens import Tokens
@@ -30,53 +32,243 @@ load_dotenv()
 
 LOCAL_BOT_PORT = 6001
 
+# TODO: parse REDIS_URL (set in heroku)
+# TODO: redis implementation
+#   OAuth flow
+#       * set flow-key with user ID and timestamp in redis when flow starts
+#       * GET on redirect
+#           * check if flow-key exist, and pop the key
+#           * get tokens
+#           * verify that the user id matches the key in redis
+#           * store token as state for user ID in redis
+#   garbage collection on flow-keys in redis
+#       * triggered when a new flow is initiated
+#       * iterate over all flow keys
+#       * delete the ones which are too old
+#   token maintenance
+#       * whenever a user context is requested
+#       * check remaining token lifetime
+#       * if remaining lifetime is "critical" obtain new access token and store that in the user state
+#   use redis sets to track users and flows
+#       .sadd
+#       .srem
 
-@dataclass(init=False)
-class ConfigBackend(ABC):
-    config_id: str
 
-    def __init__(self, *, config_id: str = None):
-        self.config_id = config_id or self.__class__.__name__
+class UserContext(BaseModel):
+    user_id: str
+    tokens: Tokens
+
+
+class TokenManager(ABC):
+
+    def __init__(self, bot_token:str, integration: 'Integration', **kwargs):
+        self._integration = integration
+        self._bot_token = bot_token
 
     @abstractmethod
-    def get(self) -> dict:
+    def close(self):
+        ...
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    @abstractmethod
+    def start_flow(self, *, user_id: str) -> str:
+        """
+        Register OAuth flow for a user
+        :param user_id:
+        :return: flow id
+        """
         ...
 
     @abstractmethod
-    def put(self, data: dict):
+    def process_redirect(self, *, flow_id: str, code: str) -> str:
+        """
+        Process redirect at end of OAuth flow. New tokens are stored in user context
+        :param flow_id:
+        :param code:
+        :return: HTTP response
+        """
         ...
 
+    @abstractmethod
+    def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
+        """
+        Get user context for given user_id
+        :param user_id:
+        :return:
+        """
+        ...
 
-TypeConfigBackend = Type[ConfigBackend]
+    def register_redirect(self, *, flask: flask.Flask):
+        """
+        Reguser /redirect endpoint for OAuth flows
+        :return:
+        """
+        # register /redirect endpoint
+        flask.add_url_rule(rule='/redirect', endpoint='redirect', view_func=self.redirect, methods=('GET',))
+
+    def redirect(self):
+        """
+        view function for GET on /redirect
+        Get code and state (flow id) from URL and set event on the registered flow
+        :return:
+        """
+        # get code and flow id from URL
+        query = urllib.parse.parse_qs(flask.request.query_string.decode())
+        code = query.get('code', [None])[0]
+        flow_id = query.get('state', [None])[0]
+
+        if not all((code, flow_id)):
+            return ''
+        return self.process_redirect(flow_id=flow_id, code=code)
 
 
-class ConfigBackendFactory:
-    def __init__(self, *, backend: TypeConfigBackend):
-        self._backend = backend
+class RedisTokenManager(TokenManager):
+    class FlowState(BaseModel):
+        user_id: str
+        created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
 
-    def get_backend(self, *, config_id: str = None):
-        return self._backend(config_id=config_id)
+    def __init__(self, bot_token:str, integration: 'Integration', redis_host: str=None, redis_url:str=None):
+        """
+        set up token Manager
+        :param redis_host:
+        """
+        super().__init__(bot_token=bot_token, integration=integration)
+        if redis_host:
+            log.debug(f'Setting up redis, host: {redis_host}')
+            self.redis = redis.Redis(host=redis_host)
+        else:
+            log.debug(f'Setting up redis, url: {redis_url}')
+            self.redis = redis.from_url(redis_url)
 
+    def close(self):
+        # close redis connection
+        if self.redis:
+            self.redis.close()
+            self.redis = None
 
-class ConfigYML(ConfigBackend):
-    @property
-    def yml_path(self) -> str:
-        path = os.path.join(os.getcwd(), f'{self.config_id}.yml')
-        return path
+    def _flow_maintenance(self):
+        """
+        Garbage collection on existing flows
+        :return:
+        """
+        pass
 
-    def get(self) -> dict:
-        # read data from YML
+    def start_flow(self, *, user_id: str) -> str:
+        """
+        Register OAuth flow for a user
+        :param user_id:
+        :return: flow id
+        """
+        flow_id = str(uuid.uuid4())
+        flow_key = f'flow-{flow_id}'
+        flow_state = RedisTokenManager.FlowState(user_id=user_id).json()
+        log.debug(f'start_flow: set({flow_key}, {flow_state})')
+        self.redis.set(flow_key, flow_state)
+        self.redis.sadd('flows', flow_key)
+        return flow_id
+
+    def process_redirect(self, *, flow_id: str, code: str) -> str:
+        """
+        Process redirect at end of OAuth flow. New tokens are stored in user context
+        :param flow_id:
+        :param code:
+        :return:
+        """
+        flow_key = f'flow-{flow_id}'
+        flow_state_str = self.redis.get(flow_key)
+        if not flow_state_str:
+            log.warning(f'process_redirect({flow_id}, {code}): unknown flow_id: {flow_id}')
+            return f'unknown flow_id: {flow_id}'
+        # delete flow from redis
+        self.redis.delete(flow_key)
+        self.redis.srem('flows', flow_key)
         try:
-            with open(self.yml_path, mode='r') as file:
-                data = yaml.safe_load(file)
-        except FileNotFoundError:
-            data = {}
-        return data
+            flow_state = RedisTokenManager.FlowState.parse_obj(json.loads(flow_state_str))
+        except (json.JSONDecodeError, pydantic.PydanticTypeError) as e:
+            log.warning(f'process_redirect({flow_id}, {code}): failed to parse state, {e}')
+            return f'failed to parse state'
 
-    def put(self, data: dict):
-        # write data to file
-        with open(self.yml_path, mode='w') as file:
-            yaml.dump(data, file)
+        # get token for code
+        try:
+            tokens = self._integration.tokens_from_code(code=code)
+        except requests.HTTPError as e:
+            log.warning(f'process_redirect({flow_id}, {code}): failed to get tokens, {e}')
+            return f'failed to get tokens'
+        tokens.set_expiration()
+        with WebexSimpleApi(tokens=tokens) as api:
+            me = api.people.me()
+        if me.person_id != flow_state.user_id:
+            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.user_name}')
+            return f'tokens for wrong user: {me.user_name}'
+        # store user context (tokens) in redis
+        user_context = UserContext(user_id=flow_state.user_id, tokens=tokens)
+        user_context_json = user_context.json()
+        redis_key = f'user-{flow_state.user_id}'
+        log.debug(f'process_redirect({flow_id}, {code}): store context {redis_key}->{user_context_json}')
+        self.redis.set(redis_key, user_context_json)
+        self.redis.sadd('users', flow_state.user_id)
+        api = WebexTeamsAPI(access_token=self._bot_token)
+        api.messages.create(toPersonId=flow_state.user_id,
+                            text=f'Successfully authenticated. Access '
+                                 f'token valid until {tokens.expires_at}')
+        return 'Authenticated'
+
+    def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
+        """
+        Get user context for given user_id
+        :param user_id:
+        :return:
+        """
+        redid_key = f'user-{user_id}'
+        user_context_json = self.redis.get(redid_key)
+        if not user_context_json:
+            return None
+        try:
+            user_context = UserContext.parse_obj(json.loads(user_context_json))
+        except (pydantic.PydanticTypeError, json.JSONDecodeError) as e:
+            log.warning(f'get_user_context({user_id}): failed to parse JSON, {e}')
+            return None
+        return user_context
+
+
+class YAMLTokenManager(TokenManager):
+    def __init__(self, bot_token:str, integration: 'Integration', yml_base: str):
+        super().__init__(bot_token=bot_token, integration=integration)
+        self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
+
+    def close(self):
+        # nothing to do here
+        pass
+
+    def start_flow(self, *, user_id: str) -> str:
+        """
+        Register OAuth flow for a user
+        :param user_id:
+        :return: flow id
+        """
+        ...
+
+    def process_redirect(self, *, flow_id: str, code: str):
+        """
+        Process redirect at end of OAuth flow. New tokens are stored in user context
+        :param flow_id:
+        :param code:
+        :return:
+        """
+        ...
+
+    def get_user_context(self, *, user_id: str):
+        """
+        Get user context for given user_id
+        :param user_id:
+        :return:
+        """
+        ...
 
 
 @dataclass
@@ -109,7 +301,7 @@ class Integration:
         full_url = f'{self.auth_service}?{urllib.parse.urlencode(params)}'
         return full_url
 
-    def tokens_from_code(self, code: str) -> Tokens:
+    def tokens_from_code(self, *, code: str) -> Tokens:
         url = self.token_service
         data = {
             'grant_type': 'authorization_code',
@@ -160,96 +352,6 @@ class Integration:
         return False
 
 
-class RedirectHandler:
-    """
-    Helper class to process GETs on redirect URI for OAuth flows
-    """
-
-    def __init__(self):
-        # flow registry has a slot for each active flow
-        # while we are still waiting for the flow to complete the slot holds the Event to signal flow completion
-        # on seeing the POST to th redirect endpoint the code is stored in the slot instead
-        self._flow_registry: Dict[str, Union[threading.Event, str]] = dict()
-        self._flow_registry_lock = threading.Lock()
-
-    def register_flask(self, app: flask.Flask):
-        """
-        Register redirect endpoint for final step of OAuth flows
-        :param app:
-        :return:
-        """
-        # register /redirect endpoint
-        app.add_url_rule(rule='/redirect', endpoint='redirect', view_func=self.redirect, methods=('GET',))
-
-    def redirect(self):
-        """
-        view function for GET on /redirect
-        Get code and state (flow id) from URL and set event on the registered flow
-        :return:
-        """
-        # get code and flow id from URL
-        query = urllib.parse.parse_qs(flask.request.query_string.decode())
-        code = query.get('code', [None])[0]
-        flow_id = query.get('state', [None])[0]
-
-        if not all((code, flow_id)):
-            return ''
-        # is this a registered flow?
-        with self._flow_registry_lock:
-            flow_info = self._flow_registry.get(flow_id)
-            if flow_info is None:
-                log.warning(f'Got redirect for unknown flow id: {flow_id}')
-                return 'Unknown flow...'
-            flow_info: threading.Event
-            # set code as result for this flow and mark as done .. someone is waiting for the event
-            self._flow_registry[flow_id] = code
-            flow_info.set()
-        return 'Authenticated'
-
-    def register_flow(self) -> str:
-        """
-        Register a new OAuth flow and get a flow id for the new flow
-        :return:
-        """
-        # get UUID for a new redirect flow
-        flow_id = str(uuid.uuid4())
-
-        # add an Event to the registry we can wait for until the auth flow completes
-        with self._flow_registry_lock:
-            self._flow_registry[flow_id] = threading.Event()
-        log.debug(f'registered new auth flow: {flow_id}')
-        return flow_id
-
-    def get_code_for_flow(self, flow_id: str, timeout: int = 120) -> Optional[str]:
-        """
-        Return code posted to redirect endpoint for given flow id
-        Waits timeout seconds for the flow to terminate, else returns None
-        :param flow_id:
-        :param timeout
-        :return:
-        """
-        event = self._flow_registry.get(flow_id)
-        if event is None:
-            log.warning(f'Unknown flow_id: {flow_id}')
-            return None
-        event: threading.Event
-        # wait for event to be set; the event gets set in the /redirect view function
-        flow_done = event.wait(timeout=timeout)
-        if flow_done:
-            code = self._flow_registry[flow_id]
-        else:
-            code = None
-        # remove flow from registry
-        with self._flow_registry_lock:
-            self._flow_registry.pop(flow_id)
-        return code
-
-
-class UserContext(BaseModel):
-    user_id: str
-    tokens: Tokens
-
-
 def catch_exception(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -263,22 +365,6 @@ def catch_exception(f):
 
     return wrapper
 
-class UserContextRegistry:
-    def __init__(self):
-        # read cache from local file
-        # .. or set up redis connection
-        pass
-
-    def get_context(self, user_id:str):
-        # read form local cachee
-        # .. or from redis
-        pass
-
-    def update_context(self, user_id:str, context:UserContext):
-        # update local cache
-        # .. and write cache to disk
-        # .. or update key in redis
-        pass
 
 class CallControlBot(TeamsBot):
     def __init__(self,
@@ -305,26 +391,21 @@ class CallControlBot(TeamsBot):
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
 
-        self._config_backend = ConfigYML(config_id='event_monitor')
-        self._user_context_registry: Dict[str, UserContext] = dict()
-        self.get_user_contexts()
-
-        self._redirect_handler = RedirectHandler()
-        self._redirect_handler.register_flask(app=self)
         self._integration = Integration(client_id=client_id, client_secret=client_secret)
-        self._call_event_exec = ThreadPoolExecutor()
+        redis_host = os.getenv('REDIS_HOST')
+        redis_url = os.getenv('REDIS_TLS_URL') or os.getenv('REDIS_URL')
+        if redis_host or redis_url:
+            self._token_manager = RedisTokenManager(bot_token=teams_bot_token, integration=self._integration,
+                                                    redis_host=redis_host,
+                                                    redis_url=redis_url)
+        else:
+            self._token_manager = YAMLTokenManager(bot_token=teams_bot_token, integration=self._integration,
+                                                   yml_base='wxc_cc_bot')
+        self._token_manager.register_redirect(flask=self)
+        self._thread_pool = ThreadPoolExecutor()
 
         # add a view function for call events
         self.add_url_rule('/callevent/<user_id>', endpoint='callevent', view_func=self.call_event, methods=('POST',))
-
-    def get_user_contexts(self):
-        config = self._config_backend.get()
-        self._user_context_registry = {k: UserContext.parse_obj(v)
-                                       for k, v in config.items()}
-
-    def put_user_contexts(self):
-        data = {k: json.loads(v.json()) for k, v in self._user_context_registry.items()}
-        self._config_backend.put(data)
 
     def call_event_url(self, user_id: str) -> str:
         """
@@ -349,6 +430,8 @@ class CallControlBot(TeamsBot):
             :param json_data:
             :return:
             """
+            if not self._token_manager.get_user_context(user_id=user_id):
+                return
             event = TelephonyEvent.parse_obj(json_data)
             call = event.data
             # simply post a message with the call info
@@ -357,17 +440,8 @@ class CallControlBot(TeamsBot):
                                                                                indent=2) + "\n```")
 
         # actually handle in dedicated thread to avoid lock-up
-        if self.get_user_context(user_id=user_id):
-            # only handle if we have a user context for that user_id; else ignore
-            self._call_event_exec.submit(thread_handle, user_id=user_id, json_data=flask.request.json)
+        self._thread_pool.submit(thread_handle, user_id=user_id, json_data=flask.request.json)
         return ''
-
-    def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
-        return self._user_context_registry.get(user_id)
-
-    def set_user_context(self, *, user_context: UserContext):
-        self._user_context_registry[user_context.user_id] = user_context
-        self.put_user_contexts()
 
     def auth_callback(self, message: Message):
         """
@@ -376,44 +450,18 @@ class CallControlBot(TeamsBot):
         :return:
         """
 
-        def authenticate():
+        def authenticate(user_id: str):
             """
             Authenticate sender of /auth command
             :return:
             """
             # register auth flow and get flow id
-            flow_id = self._redirect_handler.register_flow()
+            flow_id = self._token_manager.start_flow(user_id=user_id)
 
             # get auth URL and share URL with user
             auth_url = self._integration.auth_url(state=flow_id)
             self.teams.messages.create(toPersonEmail=user_email,
                                        markdown=f'Click this [link]({auth_url}) to authenticate ({flow_id})')
-
-            # get code at end of redirect flow
-            code = self._redirect_handler.get_code_for_flow(flow_id=flow_id)
-            if code is None:
-                self.teams.messages.create(toPersonEmail=user_email,
-                                           text=f'Failed to get code ({flow_id})')
-                return
-
-            # get tokens from code
-            tokens = self._integration.tokens_from_code(code=code)
-            tokens.set_expiration()
-
-            # verify that the token actually is for the user who initiated the authentication
-            api = WebexTeamsAPI(access_token=tokens.access_token)
-            user = api.people.me()
-            user: Person
-            if user_email != user.emails[0]:
-                self.teams.messages.create(toPersonEmail=user_email,
-                                           text=f'Got authentication for {user.emails[0]}, expected: {user_email}')
-                return
-            user_context = UserContext(user_id=user_id,
-                                       tokens=tokens)
-            self.set_user_context(user_context=user_context)
-            self.teams.messages.create(toPersonEmail=user_email,
-                                       text=f'Successfully authenticated {user_email}, token valid until '
-                                            f'{tokens.expires_at} ({flow_id})')
             return
 
         # check if we still have valid tokens for user
@@ -423,9 +471,9 @@ class CallControlBot(TeamsBot):
         #   * thread waits for code and adds tokens to cache
         user_email = message.personEmail
         user_id = message.personId
-        user_context = self.get_user_context(user_id=user_id)
+        user_context = self._token_manager.get_user_context(user_id=user_id)
         if not user_context:
-            threading.Thread(target=authenticate).start()
+            self._thread_pool.submit(authenticate, user_id=user_id)
             return f'No user context for {user_email}'
         return f'User context for {user_email}: access token valid until {user_context.tokens.expires_at}'
 
@@ -438,7 +486,7 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
             return 'usage: /monitor on|off'
-        user_context = self.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context(user_id=message.personId)
         if user_context is None:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
@@ -450,8 +498,8 @@ class CallControlBot(TeamsBot):
                         wh.target_url.endswith(message.personId)]
             if webhooks:
                 # delete all of them
-                list(self._call_event_exec.map(lambda wh: api.webhook.webhook_delete(webhook_id=wh.webhook_id),
-                                               webhooks))
+                list(self._thread_pool.map(lambda wh: api.webhook.webhook_delete(webhook_id=wh.webhook_id),
+                                           webhooks))
 
             if line[1] == 'on':
                 # turn monitoring on
@@ -471,7 +519,7 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 2:
             return 'Usage: /dial <dial string>'
-        user_context = self.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context(user_id=message.personId)
         if user_context is None:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
@@ -488,33 +536,33 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 1:
             return 'Usage: /answer'
-        user_context = self.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context(user_id=message.personId)
         if user_context is None:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
         @catch_exception
         def answer_call(user_id: str):
-            user_context = self.get_user_context(user_id=user_id)
+            user_context = self._token_manager.get_user_context(user_id=message.personId)
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 # list calls
                 calls = api.telephony.list_calls()
                 # find call in 'alerting'
                 alerting_call = next((c for c in calls if c.state == 'alerting'), None)
                 if alerting_call is None:
-                    self._call_event_exec.submit(self.teams.messages.create, toPersonId=user_id,
-                                                 text='No call in "alerting"')
+                    self._thread_pool.submit(self.teams.messages.create, toPersonId=user_id,
+                                             text='No call in "alerting"')
                     return
                 # answer that call
-                self._call_event_exec.submit(self.teams.messages.create,
-                                             toPersonId=user_id,
-                                             text=f'answering call from {alerting_call.remote_party.name}'
-                                                  f'({alerting_call.remote_party.number})')
-                self._call_event_exec.submit(catch_exception(api.telephony.answer), call_id=alerting_call.call_id)
+                self._thread_pool.submit(self.teams.messages.create,
+                                         toPersonId=user_id,
+                                         text=f'answering call from {alerting_call.remote_party.name}'
+                                              f'({alerting_call.remote_party.number})')
+                self._thread_pool.submit(catch_exception(api.telephony.answer), call_id=alerting_call.call_id)
             return
 
         # answer_call(user_id=message.personId)
         # submit thread to actually answer the call
-        self._call_event_exec.submit(answer_call, user_id=message.personId)
+        self._thread_pool.submit(answer_call, user_id=message.personId)
         return ''
 
     def hangup_callback(self, message: Message):
@@ -526,32 +574,32 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 1:
             return 'Usage: /hangup'
-        user_context = self.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context(user_id=message.personId)
         if user_context is None:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
         @catch_exception
         def hangup_call(user_id: str):
-            user_context = self.get_user_context(user_id=user_id)
+            user_context = self._token_manager.get_user_context(user_id=message.personId)
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 # list calls
                 calls = api.telephony.list_calls()
                 # find call in 'connected'
                 connected_call = next((c for c in calls if c.state == 'connected'), None)
                 if connected_call is None:
-                    self._call_event_exec.submit(self.teams.messages.create, toPersonId=user_id,
-                                                 text='No connected call')
+                    self._thread_pool.submit(self.teams.messages.create, toPersonId=user_id,
+                                             text='No connected call')
                     return
                 # hang up that call
-                self._call_event_exec.submit(self.teams.messages.create,
-                                             toPersonId=user_id,
-                                             text=f'hanging up call from {connected_call.remote_party.name}'
-                                                  f'({connected_call.remote_party.number})')
-                self._call_event_exec.submit(catch_exception(api.telephony.hangup), call_id=connected_call.call_id)
+                self._thread_pool.submit(self.teams.messages.create,
+                                         toPersonId=user_id,
+                                         text=f'hanging up call from {connected_call.remote_party.name}'
+                                              f'({connected_call.remote_party.number})')
+                self._thread_pool.submit(catch_exception(api.telephony.hangup), call_id=connected_call.call_id)
             return
 
         # submit thread to actually hang up the call
-        self._call_event_exec.submit(hangup_call, user_id=message.personId)
+        self._thread_pool.submit(hangup_call, user_id=message.personId)
         return ''
 
 
