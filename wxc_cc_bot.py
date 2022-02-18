@@ -32,6 +32,7 @@ load_dotenv()
 
 LOCAL_BOT_PORT = 6001
 
+
 # TODO: parse REDIS_URL (set in heroku)
 # TODO: redis implementation
 #   OAuth flow
@@ -61,7 +62,7 @@ class UserContext(BaseModel):
 
 class TokenManager(ABC):
 
-    def __init__(self, bot_token:str, integration: 'Integration', **kwargs):
+    def __init__(self, bot_token: str, integration: 'Integration', **kwargs):
         self._integration = integration
         self._bot_token = bot_token
 
@@ -132,23 +133,22 @@ class RedisTokenManager(TokenManager):
         user_id: str
         created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
 
-    def __init__(self, bot_token:str, integration: 'Integration', redis_host: str=None, redis_url:str=None):
+    def __init__(self, bot_token: str, integration: 'Integration', redis_host: str = None, redis_url: str = None):
         """
         set up token Manager
         :param redis_host:
         """
         super().__init__(bot_token=bot_token, integration=integration)
         if redis_host:
-            log.debug(f'Setting up redis, host: {redis_host}')
-            self.redis = redis.Redis(host=redis_host)
-        else:
-            log.debug(f'Setting up redis, url: {redis_url}')
-            url = urllib.parse.urlparse(os.environ.get("REDIS_URL"))
-            self.redis = redis.Redis(host=url.hostname, port=url.port, username=url.username, password=url.password,
-                                     ssl=True, ssl_cert_reqs=None)
+            redis_url = f'redis://{redis_host}'
+            log.debug(f'Setting up redis, host: {redis_host} ->url: {redis_url}')
+        log.debug(f'Setting up redis, url: {redis_url}')
+        url = urllib.parse.urlparse(redis_url)
+        self.redis = redis.Redis(host=url.hostname, port=url.port or 6379, username=url.username, password=url.password,
+                                 ssl=False, ssl_cert_reqs=None)
         log.debug('get(test)')
         self.redis.get('test')
-        log.debug('got(test)')
+        log.debug('got(test) --> redis is alive')
 
     def close(self):
         # close redis connection
@@ -244,7 +244,7 @@ class RedisTokenManager(TokenManager):
 
 
 class YAMLTokenManager(TokenManager):
-    def __init__(self, bot_token:str, integration: 'Integration', yml_base: str):
+    def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
 
@@ -457,7 +457,7 @@ class CallControlBot(TeamsBot):
         :return:
         """
 
-        def authenticate(user_id: str, user_email:str):
+        def authenticate(user_id: str, user_email: str):
             """
             Authenticate sender of /auth command
             :return:
@@ -487,7 +487,6 @@ class CallControlBot(TeamsBot):
         user_id = message.personId
         self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
         return ''
-
 
     def monitor_callback(self, message: Message):
         """
@@ -624,7 +623,7 @@ logging.getLogger('webexteamssdk.restsession').setLevel(logging.WARNING)
 
 heroku_name = os.getenv('HEROKU_NAME')
 if heroku_name is None:
-    log.debug('not running on Heroku. Creating Ngrok tunnel')
+    log.debug('not running on Heroku. Using ngrok to obtain a public URL')
     bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
 else:
     log.debug(f'running on heroku as {heroku_name}')

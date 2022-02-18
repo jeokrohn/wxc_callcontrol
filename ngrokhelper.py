@@ -1,9 +1,12 @@
+import logging
 import os
 import shutil
 import subprocess
 
 import backoff
 import requests
+
+log = logging.getLogger(__name__)
 
 __all__ = ['get_public_url']
 
@@ -43,6 +46,7 @@ def get_public_url(local_port: int) -> str:
     :return:
     """
     ngrok_host = os.getenv('NGROK_HOST') or None
+    log.debug(f'NGROK_HOST = {ngrok_host}')
     if ngrok_host is None:
         # start a local ngrok instance and then poll on localhost
         # where is ngrok?
@@ -52,7 +56,7 @@ def get_public_url(local_port: int) -> str:
         cmd = f'{ngrok} http {local_port}'
 
         # start ngrok process
-        print(f'starting ngrok, command: {cmd}')
+        log.debug(f'NGROK_HOST not set, starting ngrok, command: {cmd}')
         subprocess.Popen(cmd.split())
         ngrok_host = 'localhost'
     # simply poll the running ngrok for public address
