@@ -144,8 +144,10 @@ class RedisTokenManager(TokenManager):
             log.debug(f'Setting up redis, host: {redis_host} ->url: {redis_url}')
         log.debug(f'Setting up redis, url: {redis_url}')
         url = urllib.parse.urlparse(redis_url)
+        ssl = url.scheme == 'rediss'
+        log.debug(f'Setting up redis, url: {redis_url}, ssl: {ssl}')
         self.redis = redis.Redis(host=url.hostname, port=url.port or 6379, username=url.username, password=url.password,
-                                 ssl=False, ssl_cert_reqs=None)
+                                 ssl=ssl, ssl_cert_reqs=None)
         log.debug('get(test)')
         self.redis.get('test')
         log.debug('got(test) --> redis is alive')
