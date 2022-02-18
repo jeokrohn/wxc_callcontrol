@@ -251,12 +251,12 @@ class RedisTokenManager(TokenManager):
         with WebexSimpleApi(tokens=tokens) as api:
             me = api.people.me()
         if me.person_id != flow_state.user_id:
-            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.user_name}')
+            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.emails[0]}')
             api = WebexTeamsAPI(access_token=self.bot_token)
             api.messages.create(toPersonId=flow_state.user_id,
-                                text=f'tokens for wrong user: {me.user_name}')
+                                text=f'tokens for wrong user: {me.emails[0]}')
 
-            return f'tokens for wrong user: {me.user_name}'
+            return f'tokens for wrong user: {me.emails[0]}'
         # store user context (tokens) in redis
         user_context = UserContext(user_id=flow_state.user_id, tokens=tokens)
         log.debug(f'process_redirect({flow_id}, {code}): store context')

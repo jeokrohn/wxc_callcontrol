@@ -9,7 +9,7 @@ services:
       - event_monitor
     # redirect traffic to event_monitor service
     # command: http event_monitor:6001 --log stderr --log-level debug
-    command: http event_monitor:6001
+    command: http wxc_cc_bot:6001
 
   redis:
       image: redis:alpine
@@ -19,7 +19,7 @@ services:
         - .:/data
       command: redis-server --save 60 1
 
-  event_monitor:
+  wxc_cc_bot:
     build: .
     ports:
       # need to expose port 6001 to allow direct GET from local browser at end of auth flow
@@ -30,4 +30,4 @@ services:
       - REDIS_HOST=redis
     volumes:
       - ./event_monitor.yml:/app/event_monitor.yml
-    command: gunicorn event_monitor:bot -b :6001
+    command: gunicorn wxc_cc_bot:bot --workers=1 -b :6001

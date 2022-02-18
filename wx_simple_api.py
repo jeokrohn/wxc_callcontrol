@@ -2,23 +2,23 @@ import base64
 import datetime
 import json
 import logging
-import threading
 import time
 import urllib.parse
 import uuid
 from enum import Enum
-from typing import Optional, List, Literal, Type, Union
 from io import StringIO
+from typing import Optional, List, Literal, Type
 
 import backoff
 import requests
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
 from requests import Session, HTTPError, Response
 
 from tokens import Tokens
 
 __all__ = ['WebexSimpleApi', 'Person', 'CallType', 'RedirectReason', 'RecordingState', 'Personality', 'CallState',
-           'TelephonyEvent', 'WebHookEvent', 'WebHookResource', 'WebHook']
+           'TelephonyEvent', 'WebHookEvent', 'WebHookResource', 'WebHook', 'RestError']
 
 log = logging.getLogger(__name__)
 
@@ -333,7 +333,43 @@ class WebhookApi(ApiChild):
         self._api.delete(ep)
 
 
-def giveup_429(e: HTTPError):
+class SingleError(BaseModel):
+    description: str
+    code: int
+
+
+class ErrorDetail(ApiModel):
+    message: str
+    errors: List[SingleError]
+    tracking_id: str
+
+    @property
+    def description(self) -> str:
+        return self.errors and self.errors[0].description or ''
+
+    @property
+    def code(self) -> int:
+        return self.errors and self.errors[0].code or 0
+
+
+class RestError(HTTPError):
+    def __init__(self, msg: str, response: requests.Response):
+        super().__init__(msg, response=response)
+        try:
+            self.detail = ErrorDetail.parse_obj(json.loads(response.text))
+        except (json.JSONDecodeError, ValidationError):
+            self.detail = None
+
+    @property
+    def description(self) -> str:
+        return self.detail and self.detail.description or ''
+
+    @property
+    def code(self) -> str:
+        return self.detail and self.detail.code or 0
+
+
+def giveup_429(e: RestError):
     response = e.response
     response: Response
     if response.status_code != 429:
@@ -365,7 +401,13 @@ class TelephonyAPI(ApiChild):
     def list_calls(self) -> List[TelephonyCall]:
         ep = self.ep('calls')
         calls = self._api.follow_pagination(url=ep, model=TelephonyCall)
+        # noinspection PyTypeChecker
         return calls
+
+    def call_details(self, call_id: str) -> TelephonyCall:
+        ep = self.ep(f'calls/{call_id}')
+        data = self._api.get(ep)
+        return TelephonyCall.parse_obj(data)
 
 
 def dump_response(response: requests.Response, file=None) -> None:
@@ -436,7 +478,7 @@ class WebexSimpleApi:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    @backoff.on_exception(backoff.constant, HTTPError, interval=0, giveup=giveup_429)
+    @backoff.on_exception(backoff.constant, RestError, interval=0, giveup=giveup_429)
     def _request_w_response(self, method: str, *args, headers=None, **kwargs):
         headers = headers or dict()
         headers.update({'Authorization': f'Bearer {self._tokens.access_token}',
@@ -444,7 +486,11 @@ class WebexSimpleApi:
                         'TrackingID': f'WXC_SIMPLE_{uuid.uuid4()}'})
         with self._session.request(method, *args, headers=headers, **kwargs) as response:
             dump_response(response)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except HTTPError as error:
+                error = RestError(error.args[0], response=error.response)
+                raise error
             ct = response.headers.get('Content-Type')
             if not ct:
                 data = ''
