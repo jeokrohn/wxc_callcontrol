@@ -52,9 +52,12 @@ class Tokens(BaseModel):
         """
         if not self.access_token:
             return 0
-        now = datetime.datetime.utcnow()
-        now = now.replace(tzinfo=pytz.UTC)
+        now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
         diff = self.expires_at - now
         diff: datetime.timedelta
         diff = int(diff.total_seconds())
         return diff
+
+    @property
+    def needs_refresh(self):
+        return not self.access_token or self.remaining < 300

@@ -18,7 +18,7 @@ def poll_exception(e: Exception):
 
 @backoff.on_exception(backoff.constant,
                       (requests.ConnectionError, KeyError, StopIteration),
-                      interval=1,
+                      interval=2,
                       giveup=poll_exception,
                       max_time=10)
 def poll_ngrok_for_url(host: str) -> str:

@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import threading
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
@@ -10,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import wraps
 from itertools import chain
-from typing import Optional
+from typing import Optional, List
+from io import StringIO
 
 import flask
 import pydantic
@@ -127,8 +129,36 @@ class TokenManager(ABC):
             return ''
         return self.process_redirect(flow_id=flow_id, code=code)
 
+    def token_refresh(self, *, tokens) -> bool:
+        """
+        try to refresh the tokens
+        :param tokens:
+        :return:
+        """
+        return self._integration.validate_tokens(tokens)
+
 
 class RedisTokenManager(TokenManager):
+    FLOW_SET = 'flows'
+    USER_KEY_PREFIX = 'user'
+    USER_SET = 'users'
+
+    def flow_key(self, *, flow_id: str) -> str:
+        """
+        A key for a flow
+        :param flow_id:
+        :return:
+        """
+        return f'{self.FLOW_SET}-{flow_id}'
+
+    def user_key(self, *, user_id) -> str:
+        """
+        A redis key for a given user ID
+        :param user_id:
+        :return:
+        """
+        return f'{self.USER_KEY_PREFIX}-{user_id}'
+
     class FlowState(BaseModel):
         user_id: str
         created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
@@ -151,6 +181,7 @@ class RedisTokenManager(TokenManager):
         log.debug('get(test)')
         self.redis.get('test')
         log.debug('got(test) --> redis is alive')
+        self.context_lock = threading.Lock()
 
     def close(self):
         # close redis connection
@@ -172,11 +203,11 @@ class RedisTokenManager(TokenManager):
         :return: flow id
         """
         flow_id = str(uuid.uuid4())
-        flow_key = f'flow-{flow_id}'
+        flow_key = self.flow_key(flow_id=flow_id)
         flow_state = RedisTokenManager.FlowState(user_id=user_id).json()
         log.debug(f'start_flow: set({flow_key}, {flow_state})')
         self.redis.set(flow_key, flow_state)
-        self.redis.sadd('flows', flow_key)
+        self.redis.sadd(self.FLOW_SET, flow_key)
         return flow_id
 
     def process_redirect(self, *, flow_id: str, code: str) -> str:
@@ -186,14 +217,15 @@ class RedisTokenManager(TokenManager):
         :param code:
         :return:
         """
-        flow_key = f'flow-{flow_id}'
+        flow_key = self.flow_key(flow_id=flow_id)
         flow_state_str = self.redis.get(flow_key)
         if not flow_state_str:
             log.warning(f'process_redirect({flow_id}, {code}): unknown flow_id: {flow_id}')
             return f'unknown flow_id: {flow_id}'
+
         # delete flow from redis
         self.redis.delete(flow_key)
-        self.redis.srem('flows', flow_key)
+        self.redis.srem(self.FLOW_SET, flow_key)
         try:
             flow_state = RedisTokenManager.FlowState.parse_obj(json.loads(flow_state_str))
         except (json.JSONDecodeError, pydantic.PydanticTypeError) as e:
@@ -214,16 +246,27 @@ class RedisTokenManager(TokenManager):
             return f'tokens for wrong user: {me.user_name}'
         # store user context (tokens) in redis
         user_context = UserContext(user_id=flow_state.user_id, tokens=tokens)
-        user_context_json = user_context.json()
-        redis_key = f'user-{flow_state.user_id}'
-        log.debug(f'process_redirect({flow_id}, {code}): store context {redis_key}->{user_context_json}')
-        self.redis.set(redis_key, user_context_json)
-        self.redis.sadd('users', flow_state.user_id)
+        log.debug(f'process_redirect({flow_id}, {code}): store context')
+        self.set_user_context(user_context=user_context)
+
+        # inform user about successful authentication
         api = WebexTeamsAPI(access_token=self._bot_token)
         api.messages.create(toPersonId=flow_state.user_id,
                             text=f'Successfully authenticated. Access '
                                  f'token valid until {tokens.expires_at}')
         return 'Authenticated'
+
+    def set_user_context(self, *, user_context: UserContext):
+        """
+        Store user context in redis
+        :param user_context:
+        :return:
+        """
+        user_context_json = user_context.json()
+        redis_key = self.user_key(user_id=user_context.user_id)
+        log.debug(f'set_user_context: {redis_key}->{user_context_json}')
+        self.redis.set(redis_key, user_context_json)
+        self.redis.sadd(self.USER_SET, redis_key)
 
     def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
@@ -231,7 +274,7 @@ class RedisTokenManager(TokenManager):
         :param user_id:
         :return:
         """
-        redis_key = f'user-{user_id}'
+        redis_key = self.user_key(user_id=user_id)
         log.debug(f'get_user_context: get({redis_key})')
         user_context_json = self.redis.get(redis_key)
         log.debug(f'get_user_context: got({redis_key}) -> {user_context_json}')
@@ -242,6 +285,24 @@ class RedisTokenManager(TokenManager):
         except (pydantic.PydanticTypeError, json.JSONDecodeError) as e:
             log.warning(f'get_user_context({user_id}): failed to parse JSON, {e}')
             return None
+
+        def refresh():
+            log.debug(f'Token refresh for {user_id}')
+            refreshed = self.token_refresh(tokens=user_context.tokens)
+            if refreshed:
+                log.debug(f'got new tokens for {user_id}')
+                self.set_user_context(user_context=user_context)
+            if not user_context.tokens.access_token:
+                log.error(f'No access token for {user_id}')
+
+        if user_context.tokens.needs_refresh:
+            if user_context.tokens.remaining < 0 or not user_context.tokens.access_token:
+                # need immediate refresh
+                refresh()
+            else:
+                # good for now but we need new tokens "soon": scheduled a task
+                log.debug(f'Initiate refresh of tokens for {user_id}')
+                threading.Thread(target=refresh).start()
         return user_context
 
 
@@ -335,9 +396,8 @@ class Integration:
         :param tokens:
         :return: Indicate if tokens have been changed
         """
-        remaining = tokens.remaining
-        if remaining < 600:
-            log.debug(f'Getting new access token, valid until {tokens.expires_at}, remaining {remaining}')
+        if tokens.needs_refresh:
+            log.debug(f'Getting new access token, valid until {tokens.expires_at}, remaining {tokens.remaining}')
             data = {
                 'grant_type': 'refresh_token',
                 'client_id': self.client_id,
@@ -375,7 +435,12 @@ def catch_exception(f):
     return wrapper
 
 
+dataclass(init=False)
+
+
 class CallControlBot(TeamsBot):
+    _token_manager: TokenManager
+
     def __init__(self,
                  *,
                  teams_bot_name,
@@ -391,7 +456,8 @@ class CallControlBot(TeamsBot):
                          teams_bot_url=teams_bot_url,
                          approved_users=['jkrohn@cisco.com',
                                          'cbarr@tmedemo.com',
-                                         'shewitt@tmedemo.com'],
+                                         'shewitt@tmedemo.com',
+                                         'jeokrohn+duharris@gmail.com'],
                          debug=debug, **kwargs)
         # our commands
         self.add_command('/auth', 'authenticate user', self.auth_callback)
@@ -399,6 +465,7 @@ class CallControlBot(TeamsBot):
         self.add_command('/dial', 'dial a number', self.dial_callback)
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
+        self.add_command('/redis', 'redis commands: /redis info|clear', self.redis_callback)
 
         self._integration = Integration(client_id=client_id, client_secret=client_secret)
         redis_host = os.getenv('REDIS_HOST')
@@ -467,7 +534,8 @@ class CallControlBot(TeamsBot):
             user_context = self._token_manager.get_user_context(user_id=user_id)
             if user_context:
                 self.teams.messages.create(toPersonId=user_id,
-                                           text=f'User context for {user_email}: access token valid until {user_context.tokens.expires_at}')
+                                           text=f'User context for {user_email}: access token valid until '
+                                                f'{user_context.tokens.expires_at}')
                 return
             self.teams.messages.create(toPersonId=user_id, text=f'No user context for {user_email}')
 
@@ -500,7 +568,7 @@ class CallControlBot(TeamsBot):
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
             return 'usage: /monitor on|off'
         user_context = self._token_manager.get_user_context(user_id=message.personId)
-        if user_context is None:
+        if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
             # delete all existing webhooks for this user
@@ -533,11 +601,12 @@ class CallControlBot(TeamsBot):
         if len(line) != 2:
             return 'Usage: /dial <dial string>'
         user_context = self._token_manager.get_user_context(user_id=message.personId)
-        if user_context is None:
+        if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
             number = line[1]
             api.telephony.dial(destination=number)
+
         return f'Calling {number}...'
 
     def answer_callback(self, message: Message):
@@ -550,7 +619,7 @@ class CallControlBot(TeamsBot):
         if len(line) != 1:
             return 'Usage: /answer'
         user_context = self._token_manager.get_user_context(user_id=message.personId)
-        if user_context is None:
+        if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
         @catch_exception
@@ -588,7 +657,7 @@ class CallControlBot(TeamsBot):
         if len(line) != 1:
             return 'Usage: /hangup'
         user_context = self._token_manager.get_user_context(user_id=message.personId)
-        if user_context is None:
+        if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
         @catch_exception
@@ -613,6 +682,97 @@ class CallControlBot(TeamsBot):
 
         # submit thread to actually hang up the call
         self._thread_pool.submit(hangup_call, user_id=message.personId)
+        return ''
+
+    def redis_callback(self, message: Message):
+        """
+        /redis command
+        :param message:
+        :return:
+        """
+
+        def usage():
+            self.teams.messages.create(toPersonId=message.personId,
+                                       text=f'usage: /redis info|clear')
+
+        line: List[str] = message.text.split()
+        if len(line) != 2:
+            usage()
+            return
+        cmd = line[1].lower()
+        if cmd not in ['info', 'clear']:
+            usage()
+            return
+        if not isinstance(self._token_manager, RedisTokenManager):
+            self.teams.messages.create(toPersonId=message.personId,
+                                       text=f'Not using redis')
+            return
+
+        @catch_exception
+        def process():
+            """
+            Actuelly process the command in separate thread
+            :return:
+            """
+            # noinspection PyTypeChecker
+            tm: RedisTokenManager = self._token_manager
+            redis = tm.redis
+
+            output = StringIO()
+            print(f'/redis {cmd}', file=output)
+            print('```', file=output)
+            if cmd == 'info':
+                # entries in flow set
+                # flow information for all flows
+                print('---flows---', file=output)
+                flow_members = redis.smembers(tm.FLOW_SET)
+                for flow_key in flow_members:
+                    flow_key = flow_key.decode()
+                    flow_info = redis.get(flow_key)
+                    try:
+                        flow_info = json.dumps(json.loads(flow_info), indent=2)
+                    except (json.JSONDecodeError, TypeError):
+                        flow_info = str(flow_info)
+                    print(f'flow: {flow_key}', file=output)
+                    print('\n'.join(f'  {fi_line}' for fi_line in flow_info.splitlines()), file=output)
+
+                # entries in user set
+                # user information for all users
+                print('--user info---', file=output)
+                user_members = redis.smembers(tm.USER_SET)
+                for user_key in user_members:
+                    user_key = user_key.decode()
+                    user_info = redis.get(user_key)
+                    try:
+                        user_info = json.dumps(json.loads(user_info), indent=2)
+                    except (json.JSONDecodeError, TypeError):
+                        user_info = str(user_info)
+                    print(f'user info: {user_key}', file=output)
+                    print('\n'.join(f'  {fi_line}' for fi_line in user_info.splitlines()), file=output)
+
+            elif cmd == 'clear':
+                pass
+            def messages(text:str):
+                """
+                Split long message in parts
+                :param text:
+                :return:
+                """
+                part = ''
+                for text_line in text.splitlines():
+                    part = '\n'.join((part, text_line))
+                    if len(part) > 1500:
+                        part = part + '\n```'
+                        yield part
+                        part = '```'
+                if len(part) > 3:
+                    yield part + '\n```'
+            for sub_msg in messages(output.getvalue()):
+                self.teams.messages.create(toPersonId=message.personId,
+                                           markdown=sub_msg)
+
+        # actually process the command in a separate thread
+        self._thread_pool.submit(process)
         return ''
 
 

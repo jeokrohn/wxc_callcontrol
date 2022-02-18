@@ -2,9 +2,13 @@ import base64
 import datetime
 import json
 import logging
+import threading
 import time
+import urllib.parse
+import uuid
 from enum import Enum
 from typing import Optional, List, Literal, Type, Union
+from io import StringIO
 
 import backoff
 import requests
@@ -144,7 +148,7 @@ class CallType(str, Enum):
 
 
 class TelephonyEventParty(ApiModel):
-    name: str
+    name: Optional[str]
     number: str
     person_id: Optional[str]
     place_id: Optional[str]
@@ -364,6 +368,52 @@ class TelephonyAPI(ApiChild):
         return calls
 
 
+def dump_response(response: requests.Response, file=None) -> None:
+    if not log.isEnabledFor(logging.DEBUG):
+        return
+    output = file or StringIO()
+    for h in response.history:
+        dump_response(response=h, file=output)
+    print(f'Request {response.status_code}[{response.reason}]: '
+          f'{response.request.method} {response.request.url}', file=output)
+
+    for k, v in response.request.headers.items():
+        if k == 'Authorization':
+            v = 'Bearer ***'
+        print(f'  {k}: {v}', file=output)
+
+    # dump request body
+    request_body = response.request.body
+    if request_body:
+        print('  --- body ---', file=output)
+        ct = response.request.headers.get('content-type').lower()
+        if ct.startswith('application/json'):
+            for line in json.dumps(json.loads(request_body), indent=2).splitlines():
+                print(f'  {line}', file=output)
+        elif ct.startswith('application/x-www-form-urlencoded'):
+            for k, v in urllib.parse.parse_qsl(request_body):
+                print(f'  {k}: {v}', file=output)
+        else:
+            print(f'  {request_body}', file=output)
+
+    print(f' Response', file=output)
+    for k in response.headers:
+        print(f'  {k}: {response.headers[k]}', file=output)
+    body = response.text
+    # dump response body
+    if body:
+        print('  ---response body ---', file=output)
+        try:
+            body = json.dumps(json.loads(body), indent=2)
+        except json.JSONDecodeError:
+            pass
+        for line in body.splitlines():
+            print(f'  {line}', file=output)
+    print(f' ---- end ----', file=output)
+    if file is None:
+        log.debug(output.getvalue())
+
+
 class WebexSimpleApi:
     base = 'https://webexapis.com/v1'
 
@@ -390,8 +440,10 @@ class WebexSimpleApi:
     def _request_w_response(self, method: str, *args, headers=None, **kwargs):
         headers = headers or dict()
         headers.update({'Authorization': f'Bearer {self._tokens.access_token}',
-                        'Content-type': 'application/json;charset=utf-8'})
+                        'Content-type': 'application/json;charset=utf-8',
+                        'TrackingID': f'WXC_SIMPLE_{uuid.uuid4()}'})
         with self._session.request(method, *args, headers=headers, **kwargs) as response:
+            dump_response(response)
             response.raise_for_status()
             ct = response.headers.get('Content-Type')
             if not ct:
@@ -417,7 +469,7 @@ class WebexSimpleApi:
 
     def follow_pagination(self, *, url: str, model: Type[ApiModel]) -> List[ApiModel]:
         """
-        Async iterator handling RFC5988 pagination of list requests
+        Handling RFC5988 pagination of list requests
         :param url: start url for 1st GET
         :param model: data type to return
         :return: list object instances created by factory
