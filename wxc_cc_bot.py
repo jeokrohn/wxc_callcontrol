@@ -36,26 +36,11 @@ load_dotenv()
 LOCAL_BOT_PORT = 6001
 
 
-# TODO: parse REDIS_URL (set in heroku)
 # TODO: redis implementation
-#   OAuth flow
-#       * set flow-key with user ID and timestamp in redis when flow starts
-#       * GET on redirect
-#           * check if flow-key exist, and pop the key
-#           * get tokens
-#           * verify that the user id matches the key in redis
-#           * store token as state for user ID in redis
 #   garbage collection on flow-keys in redis
 #       * triggered when a new flow is initiated
 #       * iterate over all flow keys
 #       * delete the ones which are too old
-#   token maintenance
-#       * whenever a user context is requested
-#       * check remaining token lifetime
-#       * if remaining lifetime is "critical" obtain new access token and store that in the user state
-#   use redis sets to track users and flows
-#       .sadd
-#       .srem
 
 
 class UserContext(BaseModel):
