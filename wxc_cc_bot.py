@@ -461,7 +461,7 @@ class CallControlBot(TeamsBot):
                          debug=debug, **kwargs)
         # our commands
         self.add_command('/auth', 'authenticate user', self.auth_callback)
-        self.add_command('/monitor', 'turn call event monitoring on ot off', self.monitor_callback)
+        self.add_command('/monitor', 'turn call event monitoring on or off', self.monitor_callback)
         self.add_command('/dial', 'dial a number', self.dial_callback)
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
