@@ -10,15 +10,16 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import wraps
-from itertools import chain
-from typing import Optional, List
 from io import StringIO
+from itertools import chain
+from typing import Optional, List, Dict
 
 import flask
 import pydantic
 import pytz
 import redis
 import requests
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from webexteamsbot import TeamsBot
@@ -65,8 +66,8 @@ class UserContext(BaseModel):
 class TokenManager(ABC):
 
     def __init__(self, bot_token: str, integration: 'Integration', **kwargs):
-        self._integration = integration
-        self._bot_token = bot_token
+        self.integration = integration
+        self.bot_token = bot_token
 
     @abstractmethod
     def close(self):
@@ -106,6 +107,14 @@ class TokenManager(ABC):
         """
         ...
 
+    def set_user_context(self, *, user_id: str, user_context: UserContext = None):
+        """
+        Add user context to cache or clear it from cache (user_context==None)
+        :param user_context:
+        :return:
+        """
+        ...
+
     def register_redirect(self, *, flask: flask.Flask):
         """
         Reguser /redirect endpoint for OAuth flows
@@ -135,7 +144,7 @@ class TokenManager(ABC):
         :param tokens:
         :return:
         """
-        return self._integration.validate_tokens(tokens)
+        return self.integration.validate_tokens(tokens)
 
 
 class RedisTokenManager(TokenManager):
@@ -234,39 +243,48 @@ class RedisTokenManager(TokenManager):
 
         # get token for code
         try:
-            tokens = self._integration.tokens_from_code(code=code)
+            tokens = self.integration.tokens_from_code(code=code)
         except requests.HTTPError as e:
-            log.warning(f'process_redirect({flow_id}, {code}): failed to get tokens, {e}')
+            log.error(f'process_redirect({flow_id}, {code}): failed to get tokens, {e}')
             return f'failed to get tokens'
         tokens.set_expiration()
         with WebexSimpleApi(tokens=tokens) as api:
             me = api.people.me()
         if me.person_id != flow_state.user_id:
             log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.user_name}')
+            api = WebexTeamsAPI(access_token=self.bot_token)
+            api.messages.create(toPersonId=flow_state.user_id,
+                                text=f'tokens for wrong user: {me.user_name}')
+
             return f'tokens for wrong user: {me.user_name}'
         # store user context (tokens) in redis
         user_context = UserContext(user_id=flow_state.user_id, tokens=tokens)
         log.debug(f'process_redirect({flow_id}, {code}): store context')
-        self.set_user_context(user_context=user_context)
+        self.set_user_context(user_id=user_context.user_id, user_context=user_context)
 
         # inform user about successful authentication
-        api = WebexTeamsAPI(access_token=self._bot_token)
+        api = WebexTeamsAPI(access_token=self.bot_token)
         api.messages.create(toPersonId=flow_state.user_id,
                             text=f'Successfully authenticated. Access '
                                  f'token valid until {tokens.expires_at}')
         return 'Authenticated'
 
-    def set_user_context(self, *, user_context: UserContext):
+    def set_user_context(self, *, user_id: str, user_context: UserContext = None):
         """
         Store user context in redis
         :param user_context:
         :return:
         """
-        user_context_json = user_context.json()
-        redis_key = self.user_key(user_id=user_context.user_id)
-        log.debug(f'set_user_context: {redis_key}->{user_context_json}')
-        self.redis.set(redis_key, user_context_json)
-        self.redis.sadd(self.USER_SET, redis_key)
+        redis_key = self.user_key(user_id=user_id)
+        if user_context is None:
+            log.debug(f'set_user_context: remove {redis_key}')
+            self.redis.delete(redis_key)
+            self.redis.srem(self.USER_SET, redis_key)
+        else:
+            user_context_json = user_context.json()
+            log.debug(f'set_user_context: {redis_key}->{user_context_json}')
+            self.redis.set(redis_key, user_context_json)
+            self.redis.sadd(self.USER_SET, redis_key)
 
     def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
@@ -291,7 +309,7 @@ class RedisTokenManager(TokenManager):
             refreshed = self.token_refresh(tokens=user_context.tokens)
             if refreshed:
                 log.debug(f'got new tokens for {user_id}')
-                self.set_user_context(user_context=user_context)
+                self.set_user_context(user_id=user_context.user_id, user_context=user_context)
             if not user_context.tokens.access_token:
                 log.error(f'No access token for {user_id}')
 
@@ -310,6 +328,15 @@ class YAMLTokenManager(TokenManager):
     def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
+        self._user_context: Dict[str, UserContext] = dict()
+        self._flows: Dict[str, str] = dict()
+        try:
+            with open(self.yml_path, 'r') as file:
+                data = yaml.safe_load(file)
+        except FileNotFoundError:
+            data = {}
+        for user_id, context in data.items():
+            self._user_context[user_id] = UserContext.parse_obj(context)
 
     def close(self):
         # nothing to do here
@@ -321,24 +348,71 @@ class YAMLTokenManager(TokenManager):
         :param user_id:
         :return: flow id
         """
-        ...
+        flow_id = str(uuid.uuid4())
+        self._flows[flow_id] = user_id
+        return flow_id
 
-    def process_redirect(self, *, flow_id: str, code: str):
+    def process_redirect(self, *, flow_id: str, code: str) -> str:
         """
         Process redirect at end of OAuth flow. New tokens are stored in user context
         :param flow_id:
         :param code:
         :return:
         """
-        ...
+        user_id = self._flows.pop(flow_id, None)
+        if user_id is None:
+            log.warning(f'unknown flow id: {flow_id}')
+        try:
+            tokens = self.integration.tokens_from_code(code=code)
+        except requests.HTTPError as e:
+            log.error(f'failed to get tokens: {e}')
+            return f'failed to get tokens'
+        tokens.set_expiration()
+        with WebexSimpleApi(tokens=tokens) as api:
+            me = api.people.me()
+        if me.person_id != user_id:
+            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.user_name}')
+            api = WebexTeamsAPI(access_token=self.bot_token)
+            api.messages.create(toPersonId=user_id,
+                                text=f'tokens for wrong user: {me.user_name}')
 
-    def get_user_context(self, *, user_id: str):
+            return f'tokens for wrong user: {me.user_name}'
+        # store user context (tokens) in redis
+        user_context = UserContext(user_id=user_id, tokens=tokens)
+        log.debug(f'process_redirect({flow_id}, {code}): store context')
+        self.set_user_context(user_id=user_context.user_id, user_context=user_context)
+
+        # inform user about successful authentication
+        api = WebexTeamsAPI(access_token=self.bot_token)
+        api.messages.create(toPersonId=user_id,
+                            text=f'Successfully authenticated. Access '
+                                 f'token valid until {tokens.expires_at}')
+        return 'Authenticated'
+
+    def set_user_context(self, *, user_id: str, user_context: UserContext = None):
+        """
+        Store user context in redis
+        :param user_context:
+        :return:
+        """
+        if user_context is None:
+            log.debug(f'set_user_context: remove {user_id}')
+            self._user_context.pop(user_id, None)
+        else:
+            self._user_context[user_id] = user_context
+        # commit to file
+        data = {k: json.loads(v.json()) for k, v in self._user_context.items()}
+        with open(self.yml_path, mode='w') as file:
+            yaml.dump(data, file)
+
+    def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
         Get user context for given user_id
         :param user_id:
         :return:
         """
-        ...
+        context = self._user_context.get(user_id)
+        return context
 
 
 @dataclass
@@ -465,7 +539,6 @@ class CallControlBot(TeamsBot):
         self.add_command('/dial', 'dial a number', self.dial_callback)
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
-        self.add_command('/redis', 'redis commands: /redis info|clear', self.redis_callback)
 
         self._integration = Integration(client_id=client_id, client_secret=client_secret)
         redis_host = os.getenv('REDIS_HOST')
@@ -474,6 +547,7 @@ class CallControlBot(TeamsBot):
             self._token_manager = RedisTokenManager(bot_token=teams_bot_token, integration=self._integration,
                                                     redis_host=redis_host,
                                                     redis_url=redis_url)
+            self.add_command('/redis', 'redis commands: /redis info|clear', self.redis_callback)
         else:
             self._token_manager = YAMLTokenManager(bot_token=teams_bot_token, integration=self._integration,
                                                    yml_base='wxc_cc_bot')
@@ -526,12 +600,23 @@ class CallControlBot(TeamsBot):
         :return:
         """
 
+        @catch_exception
         def authenticate(user_id: str, user_email: str):
             """
             Authenticate sender of /auth command
             :return:
             """
             user_context = self._token_manager.get_user_context(user_id=user_id)
+            if len(line) == 2 and line[1] == 'clear':
+                if not user_context:
+                    self.teams.messages.create(toPersonId=user_id,
+                                               text=f'No user context for {user_email}')
+                    return
+                self._token_manager.set_user_context(user_id=user_id)
+                self.teams.messages.create(toPersonId=user_id,
+                                           text=f'Cleared user context for {user_email}')
+                return
+
             if user_context:
                 self.teams.messages.create(toPersonId=user_id,
                                            text=f'User context for {user_email}: access token valid until '
@@ -548,11 +633,9 @@ class CallControlBot(TeamsBot):
                                        markdown=f'Click this [link]({auth_url}) to authenticate ({flow_id})')
             return
 
-        # check if we still have valid tokens for user
-        # initiate auth flow if needed
-        #   * return auth message to user
-        # run thread waiting for oauth flow completion
-        #   * thread waits for code and adds tokens to cache
+        line = list(map(lambda x: x.lower(), message.text.split()))
+        if len(line) > 2 or len(line) == 2 and line[1] != 'clear':
+            return 'usage: /auth [clear]'
         user_email = message.personEmail
         user_id = message.personId
         self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
@@ -703,15 +786,11 @@ class CallControlBot(TeamsBot):
         if cmd not in ['info', 'clear']:
             usage()
             return
-        if not isinstance(self._token_manager, RedisTokenManager):
-            self.teams.messages.create(toPersonId=message.personId,
-                                       text=f'Not using redis')
-            return
 
         @catch_exception
         def process():
             """
-            Actuelly process the command in separate thread
+            Actually process the command in separate thread
             :return:
             """
             # noinspection PyTypeChecker
@@ -752,7 +831,8 @@ class CallControlBot(TeamsBot):
 
             elif cmd == 'clear':
                 pass
-            def messages(text:str):
+
+            def messages(text: str):
                 """
                 Split long message in parts
                 :param text:
@@ -767,6 +847,7 @@ class CallControlBot(TeamsBot):
                         part = '```'
                 if len(part) > 3:
                     yield part + '\n```'
+
             for sub_msg in messages(output.getvalue()):
                 self.teams.messages.create(toPersonId=message.personId,
                                            markdown=sub_msg)
