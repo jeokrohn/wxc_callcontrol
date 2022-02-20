@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+A simple bot demonstrating some of the capabilities of the Webex Calling call control APIs
+"""
 import datetime
 import json
 import logging
@@ -27,7 +30,7 @@ from webexteamssdk import Message, WebexTeamsAPI
 
 import ngrokhelper
 from tokens import Tokens
-from wx_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource
+from wx_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource, dump_response
 
 log = logging.getLogger(__name__)
 
@@ -44,11 +47,21 @@ LOCAL_BOT_PORT = 6001
 
 
 class UserContext(BaseModel):
+    """
+    User context. For each user we need to keep track of the tokens obtained for that user
+    """
     user_id: str
     tokens: Tokens
 
 
 class TokenManager(ABC):
+    """
+    Token manager consolidates all functions around tokens.
+    * registering a new OAuth flow
+    * processing the code at the end of the flow to obtain tokens
+    * storing user contexts
+    * providing access to user contexts
+    """
 
     def __init__(self, bot_token: str, integration: 'Integration', **kwargs):
         self.integration = integration
@@ -79,7 +92,7 @@ class TokenManager(ABC):
         Process redirect at end of OAuth flow. New tokens are stored in user context
         :param flow_id:
         :param code:
-        :return: HTTP response
+        :return: text for HTTP response
         """
         ...
 
@@ -133,6 +146,9 @@ class TokenManager(ABC):
 
 
 class RedisTokenManager(TokenManager):
+    """
+    Token Maager using Redis as backend
+    """
     FLOW_SET = 'flows'
     USER_KEY_PREFIX = 'user'
     USER_SET = 'users'
@@ -154,28 +170,38 @@ class RedisTokenManager(TokenManager):
         return f'{self.USER_KEY_PREFIX}-{user_id}'
 
     class FlowState(BaseModel):
+        """
+        keep track of a pending OAuth flow. For each flow we keep track of the creation time. This time is used to
+        garbage collect old flows if needed
+        """
         user_id: str
         created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
 
     def __init__(self, bot_token: str, integration: 'Integration', redis_host: str = None, redis_url: str = None):
         """
         set up token Manager
-        :param redis_host:
+        :param bot_token: bot access token. Required to be able to send responses to the user
+        :type bot_token: str
+        :param integration: OAuth integration. Used to call the respective endpoints to obtain/refresh tokens
+        :type integration:  Integration
+        :param redis_host: Redis host, Redis host takes precedence over Redis URL
+        :type redis_host: str
+        :param redis_url: Redis URL, Redis host takes precedence over Redis URL
+        :type redis_url: str
         """
         super().__init__(bot_token=bot_token, integration=integration)
         if redis_host:
             redis_url = f'redis://{redis_host}'
             log.debug(f'Setting up redis, host: {redis_host} ->url: {redis_url}')
-        log.debug(f'Setting up redis, url: {redis_url}')
         url = urllib.parse.urlparse(redis_url)
         ssl = url.scheme == 'rediss'
         log.debug(f'Setting up redis, url: {redis_url}, ssl: {ssl}')
         self.redis = redis.Redis(host=url.hostname, port=url.port or 6379, username=url.username, password=url.password,
                                  ssl=ssl, ssl_cert_reqs=None)
+        # Verify Redis operation
         log.debug('get(test)')
         self.redis.get('test')
         log.debug('got(test) --> redis is alive')
-        self.context_lock = threading.Lock()
 
     def close(self):
         # close redis connection
@@ -188,7 +214,36 @@ class RedisTokenManager(TokenManager):
         Garbage collection on existing flows
         :return:
         """
-        pass
+        now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
+        # iterate over all flows
+        for flow_key in self.redis.smembers(self.FLOW_SET):
+            flow_state = self._get_flow_state(flow_key=flow_key)
+            if not flow_state or ((now - flow_state.created).total_seconds() > 300):
+                # candidate for deletion
+                log.debug(f'garbage collection for flow {flow_key}: {flow_state}')
+                self.redis.srem(self.FLOW_SET, flow_key)
+                if flow_state:
+                    self.redis.delete(flow_key)
+                # if
+            # if not
+        # for
+        return
+
+    def _get_flow_state(self, *, flow_key: str) -> Optional[FlowState]:
+        """
+        Get parsed flow state from redis
+        :param flow_key:
+        :return:
+        """
+        flow_state_str = self.redis.get(flow_key)
+        if not flow_state_str:
+            return None
+        try:
+            flow_state = RedisTokenManager.FlowState.parse_obj(json.loads(flow_state_str))
+        except (json.JSONDecodeError, pydantic.PydanticTypeError, pydantic.ValidationError) as e:
+            log.warning(f'failed to parse state for flow key {flow_key}: {e}')
+            return None
+        return flow_state
 
     def start_flow(self, *, user_id: str) -> str:
         """
@@ -212,19 +267,14 @@ class RedisTokenManager(TokenManager):
         :return:
         """
         flow_key = self.flow_key(flow_id=flow_id)
-        flow_state_str = self.redis.get(flow_key)
-        if not flow_state_str:
-            log.warning(f'process_redirect({flow_id}, {code}): unknown flow_id: {flow_id}')
-            return f'unknown flow_id: {flow_id}'
+        flow_state = self._get_flow_state(flow_key=flow_key)
+        if not flow_state:
+            log.warning(f'process_redirect({flow_id}, {code}): failed to get state')
+            return f'unable to get state for flow'
 
         # delete flow from redis
         self.redis.delete(flow_key)
         self.redis.srem(self.FLOW_SET, flow_key)
-        try:
-            flow_state = RedisTokenManager.FlowState.parse_obj(json.loads(flow_state_str))
-        except (json.JSONDecodeError, pydantic.PydanticTypeError) as e:
-            log.warning(f'process_redirect({flow_id}, {code}): failed to parse state, {e}')
-            return f'failed to parse state'
 
         # get token for code
         try:
@@ -233,6 +283,8 @@ class RedisTokenManager(TokenManager):
             log.error(f'process_redirect({flow_id}, {code}): failed to get tokens, {e}')
             return f'failed to get tokens'
         tokens.set_expiration()
+
+        # use the new tokens to get identity of authenticated user
         with WebexSimpleApi(tokens=tokens) as api:
             me = api.people.me()
         if me.person_id != flow_state.user_id:
@@ -285,11 +337,16 @@ class RedisTokenManager(TokenManager):
             return None
         try:
             user_context = UserContext.parse_obj(json.loads(user_context_json))
-        except (pydantic.PydanticTypeError, json.JSONDecodeError) as e:
+        except Exception as e:
             log.warning(f'get_user_context({user_id}): failed to parse JSON, {e}')
             return None
 
         def refresh():
+            """
+            Refresh the access token in the user context.
+            :return:
+            :rtype:
+            """
             log.debug(f'Token refresh for {user_id}')
             refreshed = self.token_refresh(tokens=user_context.tokens)
             if refreshed:
@@ -303,13 +360,16 @@ class RedisTokenManager(TokenManager):
                 # need immediate refresh
                 refresh()
             else:
-                # good for now but we need new tokens "soon": scheduled a task
+                # good for now but we need new tokens "soon": schedule a task
                 log.debug(f'Initiate refresh of tokens for {user_id}')
                 threading.Thread(target=refresh).start()
         return user_context
 
 
 class YAMLTokenManager(TokenManager):
+    """
+    A TokenManager using a local YAML file to store user contexts
+    """
     def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
@@ -402,6 +462,9 @@ class YAMLTokenManager(TokenManager):
 
 @dataclass
 class Integration:
+    """
+    an OAuth integration
+    """
     client_id: str
     client_secret: str
     # TODO: find out which scopes are actually required
@@ -413,6 +476,11 @@ class Integration:
 
     @property
     def redirect_url(self) -> str:
+        """
+        Obtain redirect URI. Either on Heroku or localhost:6001
+        :return: redirect URL
+        :rtype: str
+        """
         # redirect URL is either local or to heroku
         heroku_name = os.getenv('HEROKU_NAME')
         if heroku_name:
@@ -420,6 +488,13 @@ class Integration:
         return 'http://localhost:6001/redirect'
 
     def auth_url(self, *, state: str) -> str:
+        """
+        Get the URL to start an OAuth flow for the integration
+        :param state: state in redirect URL
+        :type state: str
+        :return: URL to start the OAuth flow
+        :rtype: str
+        """
         params = {
             'client_id': self.client_id,
             'response_type': 'code',
@@ -431,6 +506,13 @@ class Integration:
         return full_url
 
     def tokens_from_code(self, *, code: str) -> Tokens:
+        """
+        Get a new set of tokens from code at end of OAuth flow
+        :param code: code obtained at end of SAML 2.0 OAuth flow
+        :type code: str
+        :return: new tokens
+        :rtype: Tokens
+        """
         url = self.token_service
         data = {
             'grant_type': 'authorization_code',
@@ -441,6 +523,8 @@ class Integration:
         }
         with requests.Session() as session:
             response = session.post(url=url, data=data)
+            dump_response(response, dump_log=log)
+
         response.raise_for_status()
         json_data = response.json()
         tokens = Tokens.parse_obj(json_data)
@@ -467,6 +551,7 @@ class Integration:
                 url = self.token_service
                 with requests.Session() as session:
                     with session.post(url=url, data=data) as response:
+                        dump_response(response=response, dump_log=log)
                         response.raise_for_status()
                         json_data = response.json()
             except requests.HTTPError:
@@ -481,6 +566,13 @@ class Integration:
 
 
 def catch_exception(f):
+    """
+    Wrapper to catch and log exceptions which led to termination of a thread
+    :param f:
+    :type f:
+    :return:
+    :rtype:
+    """
     @wraps(f)
     def wrapper(*args, **kwargs):
         try:
@@ -494,9 +586,7 @@ def catch_exception(f):
     return wrapper
 
 
-dataclass(init=False)
-
-
+@dataclass(init=False)
 class CallControlBot(TeamsBot):
     _token_manager: TokenManager
 
@@ -815,11 +905,19 @@ class CallControlBot(TeamsBot):
                     print('\n'.join(f'  {fi_line}' for fi_line in user_info.splitlines()), file=output)
 
             elif cmd == 'clear':
-                pass
+                # delete
+                # * all active flows
+                # * all existing user contexts
+                # * flow set
+                # * user set
+                for redis_key in chain(tm.redis.smembers(tm.FLOW_SET),
+                                       tm.redis.smembers(tm.USER_SET),
+                                       (tm.FLOW_SET, tm.USER_SET)):
+                    tm.redis.delete(redis_key)
 
             def messages(text: str):
                 """
-                Split long message in parts
+                Split long message in parts to avoit posting too long messages
                 :param text:
                 :return:
                 """

@@ -1,3 +1,6 @@
+"""
+Simple implementation of Webex tokens
+"""
 from pydantic import BaseModel
 
 from typing import Literal, Optional
@@ -8,6 +11,9 @@ __all__ = ['Tokens']
 
 
 class Tokens(BaseModel):
+    """
+    Webex tokens
+    """
     access_token: str
     expires_in: int
     expires_at: Optional[datetime.datetime]
@@ -23,6 +29,13 @@ class Tokens(BaseModel):
         return super().json(*args, **kwargs)
 
     def update(self, new_tokes: 'Tokens'):
+        """
+        Update with values from new tokens
+        :param new_tokes: tokens instance to be used as source
+        :type new_tokes: Tokens
+        :return: None
+        :rtype: None
+        """
         self.access_token = new_tokes.access_token
         self.expires_in = new_tokes.expires_in
         self.expires_at = new_tokes.expires_at
@@ -32,11 +45,10 @@ class Tokens(BaseModel):
 
     def set_expiration(self):
         """
-        Set expiration based on current time
+        Set expiration based on current time and expires in values
         :return:
         """
-        now = datetime.datetime.utcnow()
-        now = now.replace(tzinfo=pytz.UTC)
+        now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
         if not self.expires_at:
             delta = datetime.timedelta(seconds=self.expires_in)
             self.expires_at = now + delta
@@ -47,8 +59,8 @@ class Tokens(BaseModel):
     @property
     def remaining(self) -> int:
         """
-        get seconds remaining
-        :return:
+        get remaining life time in seconds
+        :return:remaining lifetime
         """
         if not self.access_token:
             return 0
@@ -59,5 +71,10 @@ class Tokens(BaseModel):
         return diff
 
     @property
-    def needs_refresh(self):
+    def needs_refresh(self) -> bool:
+        """
+        Determine if the access token needs to be refreshed
+        :return: True: access token needs to be refreshed
+        :rtype: bool
+        """
         return not self.access_token or self.remaining < 300

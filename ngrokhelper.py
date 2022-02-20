@@ -1,3 +1,6 @@
+"""
+Module to simplify the use of ngrok to get a public URL for our bot
+"""
 import logging
 import os
 import shutil
@@ -33,6 +36,7 @@ def poll_ngrok_for_url(host: str) -> str:
         with session.get(url) as response:
             response.raise_for_status()
             data = response.json()
+    # we are looking for an HTTPS tunnel. KeyError and StopIteration indicate that no HTTPS tunnel exists ... yet
     tunnel = next(tunnel for tunnel in data['tunnels']
                   if tunnel['proto'] == 'https')
     return tunnel['public_url']
@@ -40,13 +44,13 @@ def poll_ngrok_for_url(host: str) -> str:
 
 def get_public_url(local_port: int) -> str:
     """
-    Get public URL for local service. If environment informs us about Ngrok hos then poll that host.
+    Get public URL for local service. If environment informs us about Ngrok host then poll that host.
     Else start a local ngrok instance and poll that instance
     :param local_port:
     :return:
     """
     ngrok_host = os.getenv('NGROK_HOST') or None
-    log.debug(f'NGROK_HOST = {ngrok_host}')
+    log.debug(f'NGROK_HOST: {ngrok_host}')
     if ngrok_host is None:
         # start a local ngrok instance and then poll on localhost
         # where is ngrok?

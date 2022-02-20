@@ -1,3 +1,6 @@
+"""
+Simple API implementing the Webex API endpoint required for the Webex Calling call control demo bot
+"""
 import base64
 import datetime
 import json
@@ -6,8 +9,8 @@ import time
 import urllib.parse
 import uuid
 from enum import Enum
-from io import StringIO
-from typing import Optional, List, Literal, Type
+from io import StringIO, TextIOBase
+from typing import Optional, List, Literal, Type, Tuple, Union
 
 import backoff
 import requests
@@ -18,7 +21,7 @@ from requests import Session, HTTPError, Response
 from tokens import Tokens
 
 __all__ = ['WebexSimpleApi', 'Person', 'CallType', 'RedirectReason', 'RecordingState', 'Personality', 'CallState',
-           'TelephonyEvent', 'WebHookEvent', 'WebHookResource', 'WebHook', 'RestError']
+           'TelephonyEvent', 'WebHookEvent', 'WebHookResource', 'WebHook', 'RestError', 'dump_response']
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +36,9 @@ def webex_id_to_uuid(webex_id: Optional[str]) -> Optional[str]:
 
 
 class ApiChild:
+    """
+    Base class for child APIs of :class:'.WebexSimpleAPI'
+    """
 
     def __init__(self, api: 'WebexSimpleApi'):
         self._api = api
@@ -59,7 +65,7 @@ class ApiModel(BaseModel):
     """
 
     class Config:
-        alias_generator = to_camel
+        alias_generator = to_camel  # alias is camelcase version of attribute name
         allow_population_by_field_name = True
         extra = 'allow'
         # set to forbid='forbid' to raise exceptions on schema error
@@ -69,6 +75,9 @@ class ApiModel(BaseModel):
 
 
 class PhoneNumberType(str, Enum):
+    """
+    Webex phone number type
+    """
     work = 'work'
     mobile = 'mobile'
     fax = 'fax'
@@ -76,11 +85,17 @@ class PhoneNumberType(str, Enum):
 
 
 class PhoneNumber(ApiModel):
+    """
+    Webex phone number: type and Value
+    """
     number_type: PhoneNumberType = Field(alias='type')
     value: str
 
 
 class SipType(str, Enum):
+    """
+    SIP address type
+    """
     enterprise = 'enterprise'
     cloudCalling = 'cloud-calling'
     personalRoom = 'personal-room'
@@ -88,12 +103,18 @@ class SipType(str, Enum):
 
 
 class SipAddress(ApiModel):
+    """
+    SIP address: type, value and primary indication
+    """
     sip_type: SipType = Field(alias='type')
     value: str
     primary: bool
 
 
 class Person(ApiModel):
+    """
+    Webex person
+    """
     display_name: Optional[str]
     user_name: Optional[str]
     person_id: str = Field(alias='id')
@@ -139,6 +160,9 @@ class PeopleApi(ApiChild):
 
 
 class CallType(str, Enum):
+    """
+    Webex Calling call types
+    """
     location = 'location'
     organization = 'organization'
     external = 'external'
@@ -148,6 +172,9 @@ class CallType(str, Enum):
 
 
 class TelephonyEventParty(ApiModel):
+    """
+    Representation of a calling/called party of a Webex Calling call
+    """
     name: Optional[str]
     number: str
     person_id: Optional[str]
@@ -157,6 +184,9 @@ class TelephonyEventParty(ApiModel):
 
 
 class RedirectReason(str, Enum):
+    """
+    reason for Call redirection
+    """
     busy = 'busy'
     noAnswer = 'noAnswer'
     unavailable = 'unavailable'
@@ -170,16 +200,25 @@ class RedirectReason(str, Enum):
 
 
 class Redirection(ApiModel):
+    """
+    Single redirection
+    """
     reason: RedirectReason
     redirecting_party: TelephonyEventParty
 
 
 class Recall(ApiModel):
+    """
+    call recall
+    """
     recall_type: str = Field(alias='type')
     party: TelephonyEventParty
 
 
 class RecordingState(str, Enum):
+    """
+    recording state of a Webex Calling call
+    """
     pending = 'pending'
     started = 'started'
     paused = 'paused'
@@ -188,6 +227,9 @@ class RecordingState(str, Enum):
 
 
 class Personality(str, Enum):
+    """
+    Roles of an entity in a Webex Calling call
+    """
     originator = 'originator'
     terminator = 'terminator'
     click_to_dial = 'clickToDial'
@@ -203,6 +245,9 @@ class CallState(str, Enum):
 
 
 class TelephonyCall(ApiModel):
+    """
+    Representation of a Webex Calling call
+    """
     # In events the property is "callId"
     id_call_id: Optional[str] = Field(alias='callId')
     # ..while the telephony API uses "id"
@@ -312,6 +357,10 @@ class WebHook(ApiModel):
 
 
 class WebhookApi(ApiChild):
+    """
+    API endppont for webhook management
+    """
+
     def list(self) -> List[WebHook]:
         ep = self.ep('webhooks')
         result = self._api.follow_pagination(url=ep, model=WebHook)
@@ -319,7 +368,28 @@ class WebhookApi(ApiChild):
 
     def create(self, *, name: str, target_url: str, resource: WebHookResource, event: WebHookEvent, filter: str = None,
                secret: str = None,
-               owned_by: str = None):
+               owned_by: str = None) -> WebHook:
+        """
+        Creates a webhook.
+        :param name: A user-friendly name for the webhook.
+        :type name: str
+        :param target_url: The URL that receives POST requests for each event.
+        :type target_url: str
+        :param resource:The resource type for the webhook. Creating a webhook requires 'read' scope on the resource
+            the webhook is for.
+        :type resource: WebHookResource
+        :param event: The event type for the webhook.
+        :type event: WebHookEvent
+        :param filter: The filter that defines the webhook scope.
+        :type filter: str
+        :param secret: The secret used to generate payload signature.
+        :type secret: str
+        :param owned_by: Specified when creating an org/admin level webhook. Supported for meetings, recordings and
+            meetingParticipants resources for now.
+        :type owned_by: str
+        :return: the new webhook
+        :rtype:WebHook
+        """
         params = {to_camel(param): value for i, (param, value) in enumerate(locals().items())
                   if i and value is not None}
         body = json.loads(WebHookCreate(**params).json())
@@ -329,6 +399,13 @@ class WebhookApi(ApiChild):
         return result
 
     def webhook_delete(self, *, webhook_id: str):
+        """
+        Deletes a webhook, by ID.
+        :param webhook_id: The unique identifier for the webhook.
+        :type webhook_id: str
+        :return: None
+        :rtype: Noone
+        """
         ep = self.ep(f'webhooks/{webhook_id}')
         self._api.delete(ep)
 
@@ -339,6 +416,9 @@ class SingleError(BaseModel):
 
 
 class ErrorDetail(ApiModel):
+    """
+    Representation of error details in the body of an HTTP error response from Wenex Calling
+    """
     message: str
     errors: List[SingleError]
     tracking_id: str
@@ -353,8 +433,13 @@ class ErrorDetail(ApiModel):
 
 
 class RestError(HTTPError):
+    """
+    A REST error. Sub class of :class:HTTPError
+    """
+
     def __init__(self, msg: str, response: requests.Response):
         super().__init__(msg, response=response)
+        # try to parse the body of the API response
         try:
             self.detail = ErrorDetail.parse_obj(json.loads(response.text))
         except (json.JSONDecodeError, ValidationError):
@@ -369,62 +454,138 @@ class RestError(HTTPError):
         return self.detail and self.detail.code or 0
 
 
-def giveup_429(e: RestError):
+def giveup_429(e: RestError) -> bool:
+    """
+    callback for backoff on REST requests
+    :param e: latest exception
+    :type e: RestError
+    :return: True -> break the backoff loop
+    :rtype: bool
+    """
     response = e.response
     response: Response
     if response.status_code != 429:
         # Don't retry on anything other than 429
         return True
+
+    # determine how long we have to wait
     retry_after = int(response.headers.get('Retry-After', 5))
+
     # never wait more than the defined maximum
     retry_after = min(retry_after, 20)
     time.sleep(retry_after)
     return False
 
 
+class DialResponse(ApiModel):
+    """
+    Result of call initiation using the dial() method
+    """
+    call_id: str
+    call_session_id: str
+
+
 class TelephonyAPI(ApiChild):
+    """
+    The telephony API. Child of :class:'.WebexSimpleApi'
+    """
+
     def ep(self, path: str):
         return super().ep(f'telephony/{path}')
 
-    def dial(self, destination: str):
+    def dial(self, destination: str) -> DialResponse:
+        """
+        Initiate an outbound call to a specified destination. This is also commonly referred to as Click to Call or
+        Click to Dial. Alerts on all the devices belonging to the user. When the user answers on one of these alerting
+        devices, an outbound call is placed from that device to the destination.
+        :param destination: The destination to be dialed. The destination can be digits or a URI. Some examples for
+            destination include: 1234, 2223334444, +12223334444, *73, tel:+12223334444, user@company.domain,
+            sip:user@company.domain
+        :type destination: str
+        :return: Tuple of call id and call session id
+        :rtype:
+        """
         ep = self.ep('calls/dial')
-        self._api.post(ep, json={'destination': destination})
+        data = self._api.post(ep, json={'destination': destination})
+        return DialResponse.parse_obj(data)
 
     def answer(self, call_id: str):
+        """
+        Answer an incoming call on the user's primary device.
+        :param call_id: The call identifier of the call to be answered.
+        :type call_id: str
+        :return: None
+        :rtype: None
+        """
         ep = self.ep('calls/answer')
         self._api.post(ep, json={'callId': call_id})
 
     def hangup(self, call_id: str):
+        """
+        Hangup a call. If used on an unanswered incoming call, the call is rejected and sent to busy.
+        :param call_id: The call identifier of the call to hangup.
+        :type call_id: str
+        :return: None
+        :rtype: None
+        """
         ep = self.ep('calls/hangup')
         self._api.post(ep, json={'callId': call_id})
 
     def list_calls(self) -> List[TelephonyCall]:
+        """
+        Get the list of details for all active calls associated with the user.
+        :return: list of calls
+        :rtype: List[TelephonyCall]
+        """
         ep = self.ep('calls')
         calls = self._api.follow_pagination(url=ep, model=TelephonyCall)
         # noinspection PyTypeChecker
         return calls
 
     def call_details(self, call_id: str) -> TelephonyCall:
+        """
+        Get the details of the specified active call for the user.
+        :param call_id: The call identifier of the call.
+        :type call_id: str
+        :return: call details
+        :rtype: TelephonyCall
+        """
         ep = self.ep(f'calls/{call_id}')
         data = self._api.get(ep)
         return TelephonyCall.parse_obj(data)
 
 
-def dump_response(response: requests.Response, file=None) -> None:
+def dump_response(response: requests.Response, file: TextIOBase = None, dump_log: logging.Logger = None) -> None:
+    """
+    Dump response to log file
+    :param response: HTTP request response
+    :type response: request.Response
+    :param file: stream to dump to
+    :type file: TextIOBase
+    :param dump_log: logger to dump to
+    :type dump_log: logging.Logger
+    :return: None
+    :rtype: None
+    """
     if not log.isEnabledFor(logging.DEBUG):
         return
+    dump_log = dump_log or log
     output = file or StringIO()
+
+    # dump response objects in redirect history
     for h in response.history:
         dump_response(response=h, file=output)
+
     print(f'Request {response.status_code}[{response.reason}]: '
           f'{response.request.method} {response.request.url}', file=output)
 
+    # request headers
     for k, v in response.request.headers.items():
         if k == 'Authorization':
             v = 'Bearer ***'
         print(f'  {k}: {v}', file=output)
 
-    # dump request body
+    # request body
     request_body = response.request.body
     if request_body:
         print('  --- body ---', file=output)
@@ -439,6 +600,7 @@ def dump_response(response: requests.Response, file=None) -> None:
             print(f'  {request_body}', file=output)
 
     print(f' Response', file=output)
+    # response heders
     for k in response.headers:
         print(f'  {k}: {response.headers[k]}', file=output)
     body = response.text
@@ -453,13 +615,23 @@ def dump_response(response: requests.Response, file=None) -> None:
             print(f'  {line}', file=output)
     print(f' ---- end ----', file=output)
     if file is None:
-        log.debug(output.getvalue())
+        dump_log.debug(output.getvalue())
 
 
 class WebexSimpleApi:
+    """
+    A simple API implementing the endpoints needed for the simple demo
+    """
     base = 'https://webexapis.com/v1'
 
-    def ep(self, path: str):
+    def ep(self, path: str) -> str:
+        """
+        endpoint URL
+        :param path: path behind the API base URL
+        :type path: str
+        :return: URL for a given endpoint
+        :rtype: str
+        """
         return f'{self.base}/{path}'
 
     def __init__(self, tokens: Tokens):
@@ -479,7 +651,21 @@ class WebexSimpleApi:
         self.close()
 
     @backoff.on_exception(backoff.constant, RestError, interval=0, giveup=giveup_429)
-    def _request_w_response(self, method: str, *args, headers=None, **kwargs):
+    def _request_w_response(self, method: str, *args, headers=None,
+                            **kwargs) -> Tuple[requests.Response, Union[dict, str]]:
+        """
+        low level API REST request with support for 429 rate limiting
+        :param method: HTTP method
+        :type method: str
+        :param args:
+        :type args:
+        :param headers: prepared headers for request
+        :type headers: Optional[dict]
+        :param kwargs: additional keyward args
+        :type kwargs: dict
+        :return: Tuple of response object and body. Body can be text or dict (parsed from JSON body)
+        :rtype:
+        """
         headers = headers or dict()
         headers.update({'Authorization': f'Bearer {self._tokens.access_token}',
                         'Content-type': 'application/json;charset=utf-8',
@@ -489,8 +675,10 @@ class WebexSimpleApi:
             try:
                 response.raise_for_status()
             except HTTPError as error:
+                # create a RestEror based on HTTP error
                 error = RestError(error.args[0], response=error.response)
                 raise error
+            # get response body as text pr dict (parsed JSON)
             ct = response.headers.get('Content-Type')
             if not ct:
                 data = ''
@@ -500,17 +688,57 @@ class WebexSimpleApi:
                 data = response.text
         return response, data
 
-    def _request(self, method: str, *args, **kwargs):
+    def _request(self, method: str, *args, **kwargs) -> Union[str, dict]:
+        """
+        low level API request only returning the body
+        :param method: HTTP method
+        :type method: str
+        :param args:
+        :type args:
+        :param headers: prepared headers for request
+        :type headers: Optional[dict]
+        :param kwargs: additional keyward args
+        :type kwargs: dict
+        :return: body. Body can be text or dict (parsed from JSON body)
+        :rtype: Unon
+        """
         _, data = self._request_w_response(method, *args, **kwargs)
         return data
 
     def get(self, *args, **kwargs):
+        """
+        GET request
+        :param args:
+        :type args:
+        :param kwargs:
+        :type kwargs:
+        :return:
+        :rtype:
+        """
         return self._request('GET', *args, **kwargs)
 
     def post(self, *args, **kwargs):
+        """
+        POST request
+        :param args:
+        :type args:
+        :param kwargs:
+        :type kwargs:
+        :return:
+        :rtype:
+        """
         return self._request('POST', *args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        """
+        DELETE request
+        :param args:
+        :type args:
+        :param kwargs:
+        :type kwargs:
+        :return:
+        :rtype:
+        """
         return self._request('DELETE', *args, **kwargs)
 
     def follow_pagination(self, *, url: str, model: Type[ApiModel]) -> List[ApiModel]:
