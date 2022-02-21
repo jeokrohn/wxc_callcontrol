@@ -57,7 +57,7 @@ class Location(ApiModel):
         return webex_id_to_uuid(self.org_id)
 
 
-class LocationsAPI(ApiChild):
+class LocationsAPI(ApiChild, base='locations'):
     """
     Location API
 
@@ -68,18 +68,6 @@ class LocationsAPI(ApiChild):
     spark-admin:people_read and spark-admin:people_write or spark-admin:device_read AND spark-admin:device_write
     scope combinations.
     """
-
-    def ep(self, path: str = None):
-        """
-        Locations endpoint
-
-        :param path: path after locations base URL
-        :type path: str
-        :return: endpoint URL
-        :rtype: str
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(f'locations{path}')
 
     def list(self, name: str = None, location_id: str = None, org_id: str = None) -> Generator[Location, None, None]:
         """

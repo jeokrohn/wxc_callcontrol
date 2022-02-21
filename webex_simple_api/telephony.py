@@ -192,17 +192,7 @@ class DialResponse(ApiModel):
     call_session_id: str
 
 
-class CallsApi(ApiChild):
-    def ep(self, path: str = None):
-        """Calls endpoint
-
-        :param path: path after calls base URL
-        :type path: str
-        :return: endpoint URL
-        :rtype: str
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(f'telephony/calls{path}')
+class CallsApi(ApiChild, base='telephony/calls'):
 
     def dial(self, destination: str) -> DialResponse:
         """
@@ -264,21 +254,10 @@ class CallsApi(ApiChild):
         return TelephonyCall.parse_obj(data)
 
 
-class TelephonyApi(ApiChild):
+class TelephonyApi(ApiChild, base='telephony'):
     """
     The telephony API. Child of :class:`WebexSimpleApi`
     """
-
-    def ep(self, path: str = None):
-        """Telephony endpoint
-
-        :param path: path after telephony base URL
-        :type path: str
-        :return: endpoint URL
-        :rtype: str
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(f'telephony{path}')
 
     def __init__(self, session):
         super().__init__(session=session)

@@ -24,7 +24,7 @@ class WebexSimpleApi:
     """
 
     def __init__(self, tokens: Tokens):
-        self._tokens = tokens
+        #: :class:`rest.RestSession` used for all API requests
         self.session = RestSession(tokens=tokens)
         self.licenses = LicensesAPI(session=self.session)   #: Licenses API :class:`licenses.LicensesAPI`
         self.locations = LocationsAPI(session=self.session)   #: Location API :class:`locations.LocationsApi`

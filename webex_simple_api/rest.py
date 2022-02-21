@@ -290,13 +290,16 @@ class RestSession(Session):
         self._request('DELETE', *args, **kwargs)
 
     def follow_pagination(self, *, url: str, model: Type[ApiModel],
-                          params=None, **kwargs) -> Generator[ApiModel, None, None]:
+                          params: dict = None, **kwargs) -> Generator[ApiModel, None, None]:
         """
         Handling RFC5988 pagination of list requests. Generator of parsed objects
 
         :param url: start url for 1st GET
+        :type url: str
         :param model: data type to return
-        :param params: URL parameters
+        :type model: ApiModel
+        :param params: URL parameters, optional
+        :type params: Optional[dict]
         :return: yields parsed objects
         """
         while url:

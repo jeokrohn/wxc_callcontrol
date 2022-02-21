@@ -94,20 +94,10 @@ class WebHook(ApiModel):
         return webex_id_to_uuid(self.created_by)
 
 
-class WebhookApi(ApiChild):
+class WebhookApi(ApiChild, base='webhooks'):
     """
     API for webhook management
     """
-
-    def ep(self, path: str = None):
-        """
-        Webhook endpoint
-
-        :param path: path after webhook base URL
-        :return: endpoint URL
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(path=f'webhooks{path}')
 
     def list(self) -> Generator[WebHook, None, None]:
         """

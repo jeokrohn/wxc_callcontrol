@@ -154,22 +154,10 @@ class Person(ApiModel):
         return webex_id_to_uuid(self.person_id)
 
 
-class PeopleApi(ApiChild):
+class PeopleApi(ApiChild, base='people'):
     """
     People API
     """
-
-    def ep(self, path: str = None):
-        """
-        People endpoint
-
-        :param path: path after people base URL
-        :type path: str
-        :return: endpoint URL
-        :rtype: str
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(path=f'people{path}')
 
     def list(self, email: str = None, display_name: str = None, id_list: List[str] = None, org_id: str = None,
              calling_data: bool = None, location_id: str = None) -> Generator[Person, None, None]:

@@ -60,10 +60,10 @@ class UserContext(BaseModel):
 class TokenManager(ABC):
     """
     Token manager consolidates all functions around tokens.
-    * registering a new OAuth flow
-    * processing the code at the end of the flow to obtain tokens
-    * storing user contexts
-    * providing access to user contexts
+        * registering a new OAuth flow
+        * processing the code at the end of the flow to obtain tokens
+        * storing user contexts
+        * providing access to user contexts
     """
 
     def __init__(self, bot_token: str, integration: 'Integration', **kwargs):

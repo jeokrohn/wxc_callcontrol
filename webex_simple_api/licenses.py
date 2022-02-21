@@ -68,7 +68,7 @@ class License(ApiModel):
         return self.name == 'Webex Calling - Workspaces'
 
 
-class LicensesAPI(ApiChild):
+class LicensesAPI(ApiChild, base='licenses'):
     """
     Licenses
 
@@ -76,18 +76,6 @@ class LicensesAPI(ApiChild):
     partners manage the amount of licenses provided to administrators and users. This license resource can be accessed
     only by an admin.
     """
-
-    def ep(self, path: str = None):
-        """
-        Licenses endpoint
-
-        :param path: path after licenses base URL
-        :type path: str
-        :return: endpoint URL
-        :rtype: str
-        """
-        path = path and f'/{path}' or ''
-        return super().ep(f'locations{path}')
 
     def list(self, org_id: str = None) -> Generator[License, None, None]:
         """

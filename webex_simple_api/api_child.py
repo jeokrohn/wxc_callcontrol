@@ -1,4 +1,4 @@
-from .rest import RestSession,StrOrDict
+from .rest import RestSession, StrOrDict
 
 __all__ = ['ApiChild']
 
@@ -12,16 +12,29 @@ class ApiChild:
         #: REST session
         self.session = session
 
-    def ep(self, path: str):
+    def __init_subclass__(cls, base: str, **kwargs):
+        """
+        Subclass registration hook. Each APIChild has a specific endpoint prefix which we gather at subclass
+        registration time-
+
+        :param base: APIChild specific URL path
+        :param kwargs:
+        """
+        super().__init_subclass__(**kwargs)
+        # save endpoint prefix
+        cls.base = base
+
+    def ep(self, path: str = None):
         """
         endpoint URL for given path
 
-        :param path:
+        :param path: path after APIChild subclass specific endpoint URI prefix
         :type path: str
         :return: endpoint URL
         :rtype: str
         """
-        return self.session.ep(path)
+        path = path and f'/{path}' or ''
+        return self.session.ep(f'{self.base}{path}')
 
     def get(self, *args, **kwargs) -> StrOrDict:
         """
