@@ -11,6 +11,10 @@ from pydantic import Field
 from .api_child import ApiChild
 from .base import ApiModel
 
+__all__ = ['CallType', 'TelephonyEventParty', 'RedirectReason', 'Redirection', 'Recall', 'RecordingState',
+           'Personality', 'CallState', 'TelephonyCall', 'TelephonyEventData', 'TelephonyEvent', 'DialResponse',
+           'CallsApi', 'TelephonyApi']
+
 
 class CallType(str, Enum):
     """
@@ -188,13 +192,17 @@ class DialResponse(ApiModel):
     call_session_id: str
 
 
-class TelephonyApi(ApiChild):
-    """
-    The telephony API. Child of :class:`WebexSimpleApi`
-    """
+class CallsApi(ApiChild):
+    def ep(self, path: str = None):
+        """Calls endpoint
 
-    def ep(self, path: str):
-        return super().ep(f'telephony/{path}')
+        :param path: path after calls base URL
+        :type path: str
+        :return: endpoint URL
+        :rtype: str
+        """
+        path = path and f'/{path}' or ''
+        return super().ep(f'telephony/calls{path}')
 
     def dial(self, destination: str) -> DialResponse:
         """
@@ -208,7 +216,7 @@ class TelephonyApi(ApiChild):
         :type destination: str
         :return: Call id and call session id
         """
-        ep = self.ep('calls/dial')
+        ep = self.ep('dial')
         data = self.post(ep, json={'destination': destination})
         return DialResponse.parse_obj(data)
 
@@ -219,7 +227,7 @@ class TelephonyApi(ApiChild):
         :param call_id: The call identifier of the call to be answered.
         :type call_id: str
         """
-        ep = self.ep('calls/answer')
+        ep = self.ep('answer')
         self.post(ep, json={'callId': call_id})
 
     def hangup(self, call_id: str):
@@ -229,16 +237,16 @@ class TelephonyApi(ApiChild):
         :param call_id: The call identifier of the call to hangup.
         :type call_id: str
         """
-        ep = self.ep('calls/hangup')
+        ep = self.ep('hangup')
         self.post(ep, json={'callId': call_id})
 
     def list_calls(self) -> Generator[TelephonyCall, None, None]:
         """
         Get the list of details for all active calls associated with the user.
 
-        :return: list of calls
+        :return: yield :class:`TelephonyCall`
         """
-        ep = self.ep('calls')
+        ep = self.ep()
         # noinspection PyTypeChecker
         return self.session.follow_pagination(url=ep, model=TelephonyCall)
 
@@ -249,7 +257,30 @@ class TelephonyApi(ApiChild):
         :param call_id: The call identifier of the call.
         :type call_id: str
         :return: call details
+        :rtype: TelephonyCall
         """
-        ep = self.ep(f'calls/{call_id}')
+        ep = self.ep(call_id)
         data = self.get(ep)
         return TelephonyCall.parse_obj(data)
+
+
+class TelephonyApi(ApiChild):
+    """
+    The telephony API. Child of :class:`WebexSimpleApi`
+    """
+
+    def ep(self, path: str = None):
+        """Telephony endpoint
+
+        :param path: path after telephony base URL
+        :type path: str
+        :return: endpoint URL
+        :rtype: str
+        """
+        path = path and f'/{path}' or ''
+        return super().ep(f'telephony{path}')
+
+    def __init__(self, session):
+        super().__init__(session=session)
+        #: calls APi :class:`CallsApi`
+        self.calls = CallsApi(session=session)

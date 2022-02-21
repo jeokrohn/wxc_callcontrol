@@ -1,6 +1,16 @@
 """
 People types and API
+
+People are registered users of Webex. Searching and viewing People requires an auth token with a scope
+of spark:people_read. Viewing the list of all People in your Organization requires an administrator auth token
+with spark-admin:people_read scope. Adding, updating, and removing People requires an administrator auth token
+with the spark-admin:people_write and spark-admin:people_read scope.
+
+A person's call settings are for Webex Calling and necessitate Webex Calling licenses.
+
+To learn more about managing people in a room see the Memberships API.
 """
+
 import datetime
 import json
 from collections.abc import Generator
@@ -154,7 +164,9 @@ class PeopleApi(ApiChild):
         People endpoint
 
         :param path: path after people base URL
+        :type path: str
         :return: endpoint URL
+        :rtype: str
         """
         path = path and f'/{path}' or ''
         return super().ep(path=f'people{path}')
@@ -165,8 +177,8 @@ class PeopleApi(ApiChild):
         List people in your organization. For most users, either the email or display_name parameter is required. Admin
         users can omit these fields and list all users in their organization.
 
-        Response properties associated with a user's presence status, such as status or last_activity, will only be d
-        isplayed for people within your organization or an organization you manage. Presence information will not be
+        Response properties associated with a user's presence status, such as status or last_activity, will only be
+        displayed for people within your organization or an organization you manage. Presence information will not be
         shown if the authenticated user has disabled status sharing.
 
         Admin users can include Webex Calling (BroadCloud) user details in the response by specifying calling_data
@@ -174,14 +186,20 @@ class PeopleApi(ApiChild):
 
         :param email: List people with this email address. For non-admin requests, either this or displayName are
             required.
+        :type email: str
         :param display_name: List people whose name starts with this string. For non-admin requests, either this or
             email are required.
+        :type display_name: str
         :param id_list: List people by ID. Accepts up to 85 person IDs. If this parameter is provided then presence
             information (such as the last_activity or status properties) will not be included in the response.
+        :type id_list: List[str]
         :param org_id: List people in this organization. Only admin users of another organization (such as partners)
             may use this parameter.
+        :type org_id: str
         :param calling_data: Include Webex Calling user details in the response. Default: False
+        :type calling_data: bool
         :param location_id: List people present in this location.
+        :type location_id: str
         :return: yield :class:`Person` instances
         """
         params = {to_camel(k): v for i, (k, v) in enumerate(locals().items())
@@ -289,6 +307,6 @@ class PeopleApi(ApiChild):
         """
         ep = self.ep('me')
         params = calling_data and {'callingData': 'true'} or None
-        data = self.get(url=ep, params=params)
+        data = self.get(ep, params=params)
         result = Person.parse_obj(data)
         return result

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import wraps
-from io import StringIO
+from io import StringIO, TextIOBase
 from itertools import chain
 from typing import Optional, List, Dict
 
@@ -171,6 +171,7 @@ class RedisTokenManager(TokenManager):
     Token Maager using Redis as backend
     """
     FLOW_SET = 'flows'
+    FLOW_MAINTENANCE = 'flow-maintenance'
     USER_KEY_PREFIX = 'user'
     USER_SET = 'users'
 
@@ -242,19 +243,44 @@ class RedisTokenManager(TokenManager):
             self.redis.close()
             self.redis = None
 
-    def _flow_maintenance(self):
+    def flow_maintenance_needed(self, *, force: bool = False) -> bool:
+        """
+        Determine whether flow maintenance is needed; only once every 15 minutes
+        :return:
+        """
+        try:
+            latest_maintenance_str = self.redis.get(self.FLOW_MAINTENANCE) or b''
+            latest_maintenance_str = latest_maintenance_str.decode()
+            latest_maintenance = datetime.datetime.fromisoformat(latest_maintenance_str)
+        except (ValueError, TypeError):
+            latest_maintenance = None
+        now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
+        if force or latest_maintenance is None or (now - latest_maintenance).total_seconds() > 900:
+            # set current time as latest time of maintenance
+            self.redis.set(self.FLOW_MAINTENANCE, now.isoformat())
+            return True
+        return False
+
+    def flow_maintenance(self, *, force: bool = False, output: TextIOBase = None):
         """
         Garbage collection on existing flows
 
         :return:
         """
+        output = output or StringIO()
+        if not self.flow_maintenance_needed(force=force) and not force:
+            return
+        log.debug('starting flow maintenance')
         now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
         # iterate over all flows
         for flow_key in self.redis.smembers(self.FLOW_SET):
+            flow_key = flow_key.decode()
             flow_state = self._get_flow_state(flow_key=flow_key)
-            if not flow_state or ((now - flow_state.created).total_seconds() > 300):
-                # candidate for deletion
-                log.debug(f'garbage collection for flow {flow_key}: {flow_state}')
+            if force or not flow_state or ((now - flow_state.created).total_seconds() > 300):
+                # candidate for deletion if flow is older than 5 minutes
+                message = f'garbage collection for flow {flow_key}: {flow_state}'
+                log.debug(message)
+                print(f'Deleting flow {flow_key}: {flow_state and flow_state.created}', file=output)
                 self.redis.srem(self.FLOW_SET, flow_key)
                 if flow_state:
                     self.redis.delete(flow_key)
@@ -289,6 +315,7 @@ class RedisTokenManager(TokenManager):
         :type user_id: str
         :return: flow id
         """
+        self.flow_maintenance()
         flow_id = str(uuid.uuid4())
         flow_key = self.flow_key(flow_id=flow_id)
         flow_state = RedisTokenManager.FlowState(user_id=user_id).json()
@@ -675,7 +702,7 @@ class CallControlBot(TeamsBot):
                                          'jeokrohn+duharris@gmail.com'],
                          debug=debug, **kwargs)
         # our commands
-        self.add_command('/auth', 'authenticate user', self.auth_callback)
+        self.add_command('/auth', 'authenticate user: /auth [clear|force|maintenance]', self.auth_callback)
         self.add_command('/monitor', 'turn call event monitoring on or off', self.monitor_callback)
         self.add_command('/dial', 'dial a number', self.dial_callback)
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
@@ -772,6 +799,18 @@ class CallControlBot(TeamsBot):
                 self.teams.messages.create(toPersonId=user_id,
                                            text=f'Cleared user context for {user_email}')
                 return
+            if len(line) == 2 and line[1] == 'maintenance':
+                # auth flow maintenance
+                if not isinstance(self._token_manager, RedisTokenManager):
+                    self.teams.messages.create(toPersonId=user_id,
+                                               text='/auth maintenance only makes sense when using Redis backend')
+                    return
+                tm: RedisTokenManager = self._token_manager
+                output = StringIO()
+                tm.flow_maintenance(force=True, output=output)
+                self.teams.messages.create(toPersonId=user_id,
+                                           text=output.getvalue())
+                return
 
             force_auth = len(line) == 2 and line[1] == 'force'
             if user_context:
@@ -792,11 +831,21 @@ class CallControlBot(TeamsBot):
                                        markdown=f'Click this [link]({auth_url}) to authenticate ({flow_id})')
             return
 
+        def usage():
+            self.teams.messages.create(toPersonId=user_id,
+                                       text="""usage:
+* /auth: initiate auth flow if needed
+* /auth clear: clear existing user context
+* /auth force: force new authentication w/o checking for existing user context
+* /auth maintenance: flow maintenance, delete open OAuth flows older than 5 minutes""")
+            return
+
         line = list(map(lambda x: x.lower(), message.text.split()))
-        if len(line) > 2 or len(line) == 2 and line[1] not in  ['clear', 'force']:
-            return 'usage: /auth [clear|force]'
         user_email = message.personEmail
         user_id = message.personId
+
+        if len(line) > 2 or len(line) == 2 and line[1] not in ['clear', 'force', 'maintenance']:
+            usage()
         self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
         return ''
 

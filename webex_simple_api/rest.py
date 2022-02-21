@@ -189,7 +189,7 @@ class RestSession(Session):
         super().__init__()
         self._tokens = tokens
 
-    def ep(self, path: str=None):
+    def ep(self, path: str = None):
         path = path and f'/{path}' or ''
         return f'{self.BASE}{path}'
 

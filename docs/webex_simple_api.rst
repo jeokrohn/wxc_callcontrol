@@ -28,6 +28,22 @@ webex_simple_api.rest
    :undoc-members:
    :show-inheritance:
 
+webex_simple_api.licenses
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: webex_simple_api.licenses
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+webex_simple_api.locations
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: webex_simple_api.locations
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 webex_simple_api.people
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
