@@ -27,7 +27,8 @@ def poll_exception(e: Exception):
 def poll_ngrok_for_url(host: str) -> str:
     """
     Poll Ngrok client API to get public https:// URL. Maximum time: 10 seconds
-    :param host:
+
+    :param host: Ngrok host to poll
     :return:
     """
     # noinspection HttpUrlsUsage
@@ -46,7 +47,9 @@ def get_public_url(local_port: int) -> str:
     """
     Get public URL for local service. If environment informs us about Ngrok host then poll that host.
     Else start a local ngrok instance and poll that instance
-    :param local_port:
+
+    :param local_port: local port the webservice runs on
+    :type local_port: int
     :return:
     """
     ngrok_host = os.getenv('NGROK_HOST') or None

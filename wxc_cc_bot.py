@@ -17,20 +17,21 @@ from io import StringIO
 from itertools import chain
 from typing import Optional, List, Dict
 
-import flask
 import pydantic
 import pytz
 import redis
 import requests
 import yaml
 from dotenv import load_dotenv
+from flask import Flask, request as flask_request
 from pydantic import BaseModel, Field
 from webexteamsbot import TeamsBot
 from webexteamssdk import Message, WebexTeamsAPI
 
 import ngrokhelper
 from tokens import Tokens
-from wx_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource, dump_response
+from webex_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource
+from webex_simple_api.rest import dump_response
 
 log = logging.getLogger(__name__)
 
@@ -81,8 +82,11 @@ class TokenManager(ABC):
     def start_flow(self, *, user_id: str) -> str:
         """
         Register OAuth flow for a user
-        :param user_id:
-        :return: flow id
+
+        :param user_id: user id to register a flow for
+        :type user_id: str
+        :return: flow id for the new flow
+        :rtype: str
         """
         ...
 
@@ -90,9 +94,13 @@ class TokenManager(ABC):
     def process_redirect(self, *, flow_id: str, code: str) -> str:
         """
         Process redirect at end of OAuth flow. New tokens are stored in user context
-        :param flow_id:
-        :param code:
+
+        :param flow_id: OAuth flow id
+        :type flow_id: str
+        :param code: code obtained from final URL in OAuth flow
+        :type code: str
         :return: text for HTTP response
+        :rtype: str
         """
         ...
 
@@ -100,23 +108,31 @@ class TokenManager(ABC):
     def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
         Get user context for given user_id
-        :param user_id:
-        :return:
+
+        :param user_id: id of user to get context for
+        :type user_id: str
+        :return: user context
+        :rtype: UserContext
         """
         ...
 
     def set_user_context(self, *, user_id: str, user_context: UserContext = None):
         """
         Add user context to cache or clear it from cache (user_context==None)
-        :param user_context:
-        :return:
+
+        :param user_id: user id
+        :type user_id: str
+        :param user_context: user context to set; if None then clear user context for this user
+        :type user_context: UserContext
         """
         ...
 
-    def register_redirect(self, *, flask: flask.Flask):
+    def register_redirect(self, *, flask: Flask):
         """
-        Reguser /redirect endpoint for OAuth flows
-        :return:
+        Register /redirect endpoint for OAuth flows
+
+        :param flask: Flask app to register the /redirect endpoint with
+        :type flask: Flask
         """
         # register /redirect endpoint
         flask.add_url_rule(rule='/redirect', endpoint='redirect', view_func=self.redirect, methods=('GET',))
@@ -124,11 +140,12 @@ class TokenManager(ABC):
     def redirect(self):
         """
         view function for GET on /redirect
+
         Get code and state (flow id) from URL and set event on the registered flow
-        :return:
+        :meta private:
         """
         # get code and flow id from URL
-        query = urllib.parse.parse_qs(flask.request.query_string.decode())
+        query = urllib.parse.parse_qs(flask_request.query_string.decode())
         code = query.get('code', [None])[0]
         flow_id = query.get('state', [None])[0]
 
@@ -136,11 +153,13 @@ class TokenManager(ABC):
             return ''
         return self.process_redirect(flow_id=flow_id, code=code)
 
-    def token_refresh(self, *, tokens) -> bool:
+    def token_refresh(self, *, tokens: Tokens) -> bool:
         """
         try to refresh the tokens
-        :param tokens:
-        :return:
+
+        :param tokens: tokens to refresh
+        :type tokens: Tokens
+        :return: True -> tokens got updated
         """
         return self.integration.validate_tokens(tokens)
 
@@ -155,17 +174,25 @@ class RedisTokenManager(TokenManager):
 
     def flow_key(self, *, flow_id: str) -> str:
         """
-        A key for a flow
-        :param flow_id:
-        :return:
+        Redis key for a flow
+
+        :param flow_id: OAuth flow id
+        :type flow_id: str
+        :return: Redis key for given flow id
+        :rtype: str
+        :meta private:
         """
         return f'{self.FLOW_SET}-{flow_id}'
 
     def user_key(self, *, user_id) -> str:
         """
-        A redis key for a given user ID
-        :param user_id:
-        :return:
+        A Redis key for a given user ID
+
+        :param user_id: user id to create a Redis key for
+        :type user_id: str
+        :return: Redis key
+        :rtype: str
+        :meta private:
         """
         return f'{self.USER_KEY_PREFIX}-{user_id}'
 
@@ -180,6 +207,7 @@ class RedisTokenManager(TokenManager):
     def __init__(self, bot_token: str, integration: 'Integration', redis_host: str = None, redis_url: str = None):
         """
         set up token Manager
+
         :param bot_token: bot access token. Required to be able to send responses to the user
         :type bot_token: str
         :param integration: OAuth integration. Used to call the respective endpoints to obtain/refresh tokens
@@ -204,6 +232,9 @@ class RedisTokenManager(TokenManager):
         log.debug('got(test) --> redis is alive')
 
     def close(self):
+        """
+        :meta private:
+        """
         # close redis connection
         if self.redis:
             self.redis.close()
@@ -212,6 +243,7 @@ class RedisTokenManager(TokenManager):
     def _flow_maintenance(self):
         """
         Garbage collection on existing flows
+
         :return:
         """
         now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
@@ -232,8 +264,10 @@ class RedisTokenManager(TokenManager):
     def _get_flow_state(self, *, flow_key: str) -> Optional[FlowState]:
         """
         Get parsed flow state from redis
+
         :param flow_key:
-        :return:
+        :type flow_key: str
+        :return: flow state
         """
         flow_state_str = self.redis.get(flow_key)
         if not flow_state_str:
@@ -248,7 +282,9 @@ class RedisTokenManager(TokenManager):
     def start_flow(self, *, user_id: str) -> str:
         """
         Register OAuth flow for a user
-        :param user_id:
+
+        :param user_id: id of user to start the flow for
+        :type user_id: str
         :return: flow id
         """
         flow_id = str(uuid.uuid4())
@@ -262,9 +298,13 @@ class RedisTokenManager(TokenManager):
     def process_redirect(self, *, flow_id: str, code: str) -> str:
         """
         Process redirect at end of OAuth flow. New tokens are stored in user context
-        :param flow_id:
-        :param code:
-        :return:
+
+        :param flow_id: OAuth flow id
+        :type flow_id: str
+        :param code: code obtained from final URL in OAuth flow
+        :type code: str
+        :return: text for HTTP response
+        :rtype: str
         """
         flow_key = self.flow_key(flow_id=flow_id)
         flow_state = self._get_flow_state(flow_key=flow_key)
@@ -309,8 +349,11 @@ class RedisTokenManager(TokenManager):
     def set_user_context(self, *, user_id: str, user_context: UserContext = None):
         """
         Store user context in redis
-        :param user_context:
-        :return:
+
+        :param user_id: user id of user to store context for
+        :type user_id: str
+        :param user_context: contxt to store; if None then clear context for this user
+        :type user_context: UserContext
         """
         redis_key = self.user_key(user_id=user_id)
         if user_context is None:
@@ -326,8 +369,11 @@ class RedisTokenManager(TokenManager):
     def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
         Get user context for given user_id
+
         :param user_id:
+        :type user_id: str
         :return:
+        :rtype: UserContext
         """
         redis_key = self.user_key(user_id=user_id)
         log.debug(f'get_user_context: get({redis_key})')
@@ -344,8 +390,7 @@ class RedisTokenManager(TokenManager):
         def refresh():
             """
             Refresh the access token in the user context.
-            :return:
-            :rtype:
+
             """
             log.debug(f'Token refresh for {user_id}')
             refreshed = self.token_refresh(tokens=user_context.tokens)
@@ -370,6 +415,7 @@ class YAMLTokenManager(TokenManager):
     """
     A TokenManager using a local YAML file to store user contexts
     """
+
     def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
@@ -390,6 +436,7 @@ class YAMLTokenManager(TokenManager):
     def start_flow(self, *, user_id: str) -> str:
         """
         Register OAuth flow for a user
+
         :param user_id:
         :return: flow id
         """
@@ -400,9 +447,10 @@ class YAMLTokenManager(TokenManager):
     def process_redirect(self, *, flow_id: str, code: str) -> str:
         """
         Process redirect at end of OAuth flow. New tokens are stored in user context
-        :param flow_id:
-        :param code:
-        :return:
+
+        :param flow_id: OAuth flow id
+        :param code: code obtained from final URL in OAuth flow
+        :return: text for HTTP response
         """
         user_id = self._flows.pop(flow_id, None)
         if user_id is None:
@@ -437,8 +485,11 @@ class YAMLTokenManager(TokenManager):
     def set_user_context(self, *, user_id: str, user_context: UserContext = None):
         """
         Store user context in redis
-        :param user_context:
-        :return:
+
+        :param user_id: user id
+        :type user_id: str
+        :param user_context: user context; if None then clear the user context
+        :type user_context: UserContext
         """
         if user_context is None:
             log.debug(f'set_user_context: remove {user_id}')
@@ -453,6 +504,7 @@ class YAMLTokenManager(TokenManager):
     def get_user_context(self, *, user_id: str) -> Optional[UserContext]:
         """
         Get user context for given user_id
+
         :param user_id:
         :return:
         """
@@ -465,21 +517,26 @@ class Integration:
     """
     an OAuth integration
     """
-    client_id: str
-    client_secret: str
+    client_id: str  #: integration's client id, obtained from developer.webex.com
+    client_secret: str  #: integration's client id, obtained from developer.webex.com
+
     # TODO: find out which scopes are actually required
+    #: OAuth scopes of the integration
     scopes = 'spark:calls_write spark:all spark:kms spark:calls_read spark-admin:telephony_config_read ' \
              'spark-admin:telephony_config_write spark-admin:people_read'
     # scopes = 'spark:people_read spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read'
+
+    #: URL of the authorization service; used as part of the URL to start an OAuth flow
     auth_service = 'https://webexapis.com/v1/authorize'
+
+    #: base URL of the access token service
     token_service = 'https://webexapis.com/v1/access_token'
 
     @property
     def redirect_url(self) -> str:
         """
         Obtain redirect URI. Either on Heroku or localhost:6001
-        :return: redirect URL
-        :rtype: str
+
         """
         # redirect URL is either local or to heroku
         heroku_name = os.getenv('HEROKU_NAME')
@@ -490,6 +547,7 @@ class Integration:
     def auth_url(self, *, state: str) -> str:
         """
         Get the URL to start an OAuth flow for the integration
+
         :param state: state in redirect URL
         :type state: str
         :return: URL to start the OAuth flow
@@ -508,6 +566,7 @@ class Integration:
     def tokens_from_code(self, *, code: str) -> Tokens:
         """
         Get a new set of tokens from code at end of OAuth flow
+
         :param code: code obtained at end of SAML 2.0 OAuth flow
         :type code: str
         :return: new tokens
@@ -536,8 +595,11 @@ class Integration:
         using the existing refresh token.
         If no new access token can be obtained using the refresh token then the access token is set to None
         and True is returned
-        :param tokens:
+
+        :param tokens: current OAuth tokens. Get updated if new tokens are created
+        :type tokens: Tokens
         :return: Indicate if tokens have been changed
+        :rtype: bool
         """
         if tokens.needs_refresh:
             log.debug(f'Getting new access token, valid until {tokens.expires_at}, remaining {tokens.remaining}')
@@ -568,11 +630,10 @@ class Integration:
 def catch_exception(f):
     """
     Wrapper to catch and log exceptions which led to termination of a thread
-    :param f:
-    :type f:
-    :return:
-    :rtype:
+
+    :meta private:
     """
+
     @wraps(f)
     def wrapper(*args, **kwargs):
         try:
@@ -588,6 +649,9 @@ def catch_exception(f):
 
 @dataclass(init=False)
 class CallControlBot(TeamsBot):
+    """
+    The call control demo bot
+    """
     _token_manager: TokenManager
 
     def __init__(self,
@@ -635,25 +699,33 @@ class CallControlBot(TeamsBot):
     def call_event_url(self, user_id: str) -> str:
         """
         User specific call event URL
+
         :param user_id:
-        :return:
+        :type user_id: str
+        :return: generated URL
+        :meta private:
         """
         return f'{self.teams_bot_url}/callevent/{user_id}'
 
     def call_event(self, user_id: str):
         """
-        view function for posts to callevents endpoint
-        :param user_id:
+        view function for posts to callevent endpoint
+
+        :param user_id: user id, passed as parameter in the request URL
+        :type user_id: str
         :return:
+        :meta private:
         """
 
         @catch_exception
         def thread_handle(user_id: str, json_data: str):
             """
             Actually handle a call event, runs in separate thread
+
             :param user_id:
+            :type user_id: str
             :param json_data:
-            :return:
+            :type json_data: str
             """
             if not self._token_manager.get_user_context(user_id=user_id):
                 return
@@ -665,21 +737,28 @@ class CallControlBot(TeamsBot):
                                                                                indent=2) + "\n```")
 
         # actually handle in dedicated thread to avoid lock-up
-        self._thread_pool.submit(thread_handle, user_id=user_id, json_data=flask.request.json)
+        self._thread_pool.submit(thread_handle, user_id=user_id, json_data=flask_request.json)
         return ''
 
-    def auth_callback(self, message: Message):
+    def auth_callback(self, message: Message) -> str:
         """
         handler for /auth command
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
 
         @catch_exception
         def authenticate(user_id: str, user_email: str):
             """
             Authenticate sender of /auth command
-            :return:
+
+            :param user_id: user id
+            :type user_id: str
+            :param user_email: user email
+            :type user_email: str
             """
             user_context = self._token_manager.get_user_context(user_id=user_id)
             if len(line) == 2 and line[1] == 'clear':
@@ -692,12 +771,15 @@ class CallControlBot(TeamsBot):
                                            text=f'Cleared user context for {user_email}')
                 return
 
+            force_auth = len(line) == 2 and line[1] == 'force'
             if user_context:
                 self.teams.messages.create(toPersonId=user_id,
                                            text=f'User context for {user_email}: access token valid until '
                                                 f'{user_context.tokens.expires_at}')
-                return
-            self.teams.messages.create(toPersonId=user_id, text=f'No user context for {user_email}')
+                if not force_auth:
+                    return
+            else:
+                self.teams.messages.create(toPersonId=user_id, text=f'No user context for {user_email}')
 
             # register auth flow and get flow id
             flow_id = self._token_manager.start_flow(user_id=user_id)
@@ -709,8 +791,8 @@ class CallControlBot(TeamsBot):
             return
 
         line = list(map(lambda x: x.lower(), message.text.split()))
-        if len(line) > 2 or len(line) == 2 and line[1] != 'clear':
-            return 'usage: /auth [clear]'
+        if len(line) > 2 or len(line) == 2 and line[1] not in  ['clear', 'force']:
+            return 'usage: /auth [clear|force]'
         user_email = message.personEmail
         user_id = message.personId
         self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
@@ -719,8 +801,11 @@ class CallControlBot(TeamsBot):
     def monitor_callback(self, message: Message):
         """
         /monitor commamd
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
         line = message.text.split()
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
@@ -752,8 +837,11 @@ class CallControlBot(TeamsBot):
     def dial_callback(self, message: Message):
         """
         /dial command
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
         line = message.text.split()
         if len(line) != 2:
@@ -770,8 +858,11 @@ class CallControlBot(TeamsBot):
     def answer_callback(self, message: Message):
         """
         /answer command
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
         line = message.text.split()
         if len(line) != 1:
@@ -808,8 +899,11 @@ class CallControlBot(TeamsBot):
     def hangup_callback(self, message: Message):
         """
         /hangup command
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
         line = message.text.split()
         if len(line) != 1:
@@ -845,8 +939,11 @@ class CallControlBot(TeamsBot):
     def redis_callback(self, message: Message):
         """
         /redis command
+
         :param message:
-        :return:
+        :type message: Message
+        :return: response to user
+        :meta private:
         """
 
         def usage():
@@ -945,28 +1042,39 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(process)d] %(thr
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 logging.getLogger('webexteamssdk.restsession').setLevel(logging.WARNING)
 
-# determine public URL for Bot
 
-heroku_name = os.getenv('HEROKU_NAME')
-if heroku_name is None:
-    log.debug('not running on Heroku. Using ngrok to obtain a public URL')
-    bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
-else:
-    log.debug(f'running on heroku as {heroku_name}')
-    bot_url = f'https://{heroku_name}.herokuapp.com'
-log.debug(f'Webhook URL: {bot_url}')
+def create_app() -> CallControlBot:
+    """
+    Create a bot instance
 
-# Create a new bot
-bot_email = os.getenv('WXC_CC_BOT_EMAIL')
-teams_token = os.getenv('WXC_CC_BOT_ACCESS_TOKEN')
-bot_app_name = os.getenv('WXC_CC_BOT_NAME')
-client_id = os.getenv('WXC_CC_INTEGRATION_CLIENT_ID')
-client_secret = os.getenv('WXC_CC_INTEGRATION_CLIENT_SECRET')
+    :return: the Flask app object
+    :rtype: CallControlBot
+    """
+    # determine public URL for Bot
 
-bot = CallControlBot(teams_bot_name=bot_app_name, teams_bot_token=teams_token,
-                     teams_bot_url=bot_url, teams_bot_email=bot_email, debug=True,
-                     client_id=client_id, client_secret=client_secret)
+    heroku_name = os.getenv('HEROKU_NAME')
+    if heroku_name is None:
+        log.debug('not running on Heroku. Using ngrok to obtain a public URL')
+        bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
+    else:
+        log.debug(f'running on heroku as {heroku_name}')
+        bot_url = f'https://{heroku_name}.herokuapp.com'
+    log.debug(f'Webhook URL: {bot_url}')
+
+    # Create a new bot
+    bot_email = os.getenv('WXC_CC_BOT_EMAIL')
+    teams_token = os.getenv('WXC_CC_BOT_ACCESS_TOKEN')
+    bot_app_name = os.getenv('WXC_CC_BOT_NAME')
+    client_id = os.getenv('WXC_CC_INTEGRATION_CLIENT_ID')
+    client_secret = os.getenv('WXC_CC_INTEGRATION_CLIENT_SECRET')
+
+    bot = CallControlBot(teams_bot_name=bot_app_name, teams_bot_token=teams_token,
+                         teams_bot_url=bot_url, teams_bot_email=bot_email, debug=True,
+                         client_id=client_id, client_secret=client_secret)
+    return bot
+
 
 if __name__ == '__main__':
     # Run Bot
+    bot = create_app()
     bot.run(host='0.0.0.0', port=LOCAL_BOT_PORT)

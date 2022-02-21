@@ -14,15 +14,18 @@ class Tokens(BaseModel):
     """
     Webex tokens
     """
-    access_token: str
-    expires_in: int
-    expires_at: Optional[datetime.datetime]
-    refresh_token: str
-    refresh_token_expires_in: int
-    refresh_token_expires_at: Optional[datetime.datetime]
+    access_token: str  #: access token
+    expires_in: int  #: remaining lifetime at time of token creation
+    expires_at: Optional[datetime.datetime]  #: expiration, calculated at time of token creation
+    refresh_token: str  #: refresh token
+    refresh_token_expires_in: int   # remaining lifetime of refresh token at time of token creation
+    refresh_token_expires_at: Optional[datetime.datetime]   #: expiration, calculated at time of token creation
     token_type: Literal['Bearer']
 
     def json(self, *args, **kwargs):
+        """
+        :meta private:
+        """
         exclude = kwargs.get('exclude', set())
         exclude.update(('expires_in', 'refresh_token_expires_in'))
         kwargs['exclude'] = exclude
@@ -31,10 +34,9 @@ class Tokens(BaseModel):
     def update(self, new_tokes: 'Tokens'):
         """
         Update with values from new tokens
+
         :param new_tokes: tokens instance to be used as source
         :type new_tokes: Tokens
-        :return: None
-        :rtype: None
         """
         self.access_token = new_tokes.access_token
         self.expires_in = new_tokes.expires_in
@@ -46,7 +48,6 @@ class Tokens(BaseModel):
     def set_expiration(self):
         """
         Set expiration based on current time and expires in values
-        :return:
         """
         now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
         if not self.expires_at:
@@ -59,8 +60,7 @@ class Tokens(BaseModel):
     @property
     def remaining(self) -> int:
         """
-        get remaining life time in seconds
-        :return:remaining lifetime
+        remaining lifeime in seconds
         """
         if not self.access_token:
             return 0
@@ -73,8 +73,6 @@ class Tokens(BaseModel):
     @property
     def needs_refresh(self) -> bool:
         """
-        Determine if the access token needs to be refreshed
-        :return: True: access token needs to be refreshed
-        :rtype: bool
+        Determine if the access token needs to be refreshed. True: refresh needed
         """
         return not self.access_token or self.remaining < 300

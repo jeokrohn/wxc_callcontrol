@@ -1,1 +1,1 @@
-web: gunicorn wxc_cc_bot:bot --workers=1 --log-file -
+web: gunicorn 'wxc_cc_bot:create_app()' --workers=1 --log-file -

@@ -30,4 +30,4 @@ services:
       - REDIS_HOST=redis
     volumes:
       - ./event_monitor.yml:/app/event_monitor.yml
-    command: gunicorn wxc_cc_bot:bot --workers=1 -b :6001
+    command: gunicorn 'wxc_cc_bot:create_app()' --workers=1 -b :6001
