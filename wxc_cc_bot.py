@@ -30,7 +30,9 @@ from webexteamssdk import Message, WebexTeamsAPI
 
 import ngrokhelper
 from tokens import Tokens
-from webex_simple_api import WebexSimpleApi, TelephonyEvent, WebHookResource
+from webex_simple_api import WebexSimpleApi
+from webex_simple_api.telephony import TelephonyEvent
+from webex_simple_api.webhook import WebHookResource
 from webex_simple_api.rest import dump_response
 
 log = logging.getLogger(__name__)
