@@ -1,6 +1,8 @@
 Play with the Webex Calling Call Control APIs
 ---------------------------------
 
+The `Webex Calling call control APIs <https://developer.webex.com/docs/api/v1/call-controls>` offer a comprehensive
+set of functions to control or establihs calls on Webdx Calling.
 Bot as test environment. 
 
 Required parameters for Bot need to be defined in .env.
