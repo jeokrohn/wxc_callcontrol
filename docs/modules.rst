@@ -4,6 +4,7 @@ Module reference
 .. toctree::
     :maxdepth: 4
 
+    integration
     ngrokhelper
     tokens
     webex_simple_api

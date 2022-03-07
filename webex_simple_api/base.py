@@ -1,6 +1,8 @@
-from typing import Optional
 import base64
-from pydantic import BaseModel
+import sys
+from typing import Optional
+
+from pydantic import BaseModel, ValidationError
 
 
 def webex_id_to_uuid(webex_id: Optional[str]) -> Optional[str]:
@@ -33,9 +35,16 @@ class ApiModel(BaseModel):
     class Config:
         alias_generator = to_camel  # alias is camelcase version of attribute name
         allow_population_by_field_name = True
-        extra = 'forbid'
-        # set to forbid='forbid' to raise exceptions on schema error
+        # set to 'forbid' if run in unittest to catch schema issues during test
+        extra = 'forbid' if 'unittest' in sys.modules.keys() else 'allow'
 
-    def json(self, *args, exclude_unset=True, by_alias=True, **kwargs) -> str:
-        return super().json(*args, exclude_unset=exclude_unset, by_alias=by_alias, **kwargs)
+    def json(self, *args, exclude_none=True, by_alias=True, **kwargs) -> str:
+        return super().json(*args, exclude_none=exclude_none, by_alias=by_alias, **kwargs)
 
+    @classmethod
+    def parse_obj(cls, obj):
+        try:
+            r = super().parse_obj(obj)
+        except ValidationError as e:
+            raise e
+        return r

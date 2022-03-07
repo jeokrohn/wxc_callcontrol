@@ -7,11 +7,13 @@ import time
 import uuid
 from collections.abc import Generator
 from io import TextIOBase, StringIO
-from typing import List, Union, Tuple, Type
+from typing import List, Union, Tuple, Type, Optional
 from urllib.parse import parse_qsl
+from threading import Semaphore
 
 import backoff
 from pydantic import BaseModel, ValidationError
+from pydantic import Field
 from requests import HTTPError, Response, Session
 
 from tokens import Tokens
@@ -24,13 +26,18 @@ log = logging.getLogger(__name__)
 
 class SingleError(BaseModel):
     description: str
-    code: int
+    error_code: Optional[int] = Field(alias='errorCode')
+
+    @property
+    def code(self) -> Optional[int]:
+        return self.error_code
 
 
 class ErrorDetail(ApiModel):
     """
     Representation of error details in the body of an HTTP error response from Webex
     """
+    error_code: Optional[int] = Field(alias='errorCode')
     message: str  #: error message
     errors: List[SingleError]  #: list of errors; typically has a single entry
     tracking_id: str  #: tracking ID of the request
@@ -44,12 +51,12 @@ class ErrorDetail(ApiModel):
         return self.errors and self.errors[0].description or ''
 
     @property
-    def code(self) -> int:
+    def code(self) -> Optional[int]:
         """
         error code
 
         """
-        return self.errors and self.errors[0].code or 0
+        return self.errors and self.errors[0].code or None
 
 
 class RestError(HTTPError):
@@ -63,7 +70,18 @@ class RestError(HTTPError):
         try:
             self.detail = ErrorDetail.parse_obj(json.loads(response.text))
         except (json.JSONDecodeError, ValidationError):
-            self.detail = None
+            self.detail = response.text
+
+    def __str__(self):
+        desc = self.description
+        if desc:
+            if self.code:
+                desc = f', {self.code} {desc}'
+            else:
+                desc = f', {desc}'
+        else:
+            desc = ''
+        return f'{super().__str__()}{desc}'
 
     @property
     def description(self) -> str:
@@ -71,6 +89,9 @@ class RestError(HTTPError):
         error description
 
         """
+        if isinstance(self.detail, str):
+            return self.detail
+        self.detail: ErrorDetail
         return self.detail and self.detail.description or ''
 
     @property
@@ -79,7 +100,7 @@ class RestError(HTTPError):
         error code
 
         """
-        return self.detail and self.detail.code or 0
+        return self.detail and isinstance(self.detail, ErrorDetail) and self.detail.code or 0
 
 
 def dump_response(response: Response, file: TextIOBase = None, dump_log: logging.Logger = None) -> None:
@@ -107,7 +128,7 @@ def dump_response(response: Response, file: TextIOBase = None, dump_log: logging
 
     # request headers
     for k, v in response.request.headers.items():
-        if k == 'Authorization':
+        if k.lower() == 'authorization':
             v = 'Bearer ***'
         print(f'  {k}: {v}', file=output)
 
@@ -165,7 +186,7 @@ def _giveup_429(e: RestError) -> bool:
     # determine how long we have to wait
     retry_after = int(response.headers.get('Retry-After', 5))
 
-    # never wait more than the defined maximum
+    # never wait more than the defined maximum of 20 s
     retry_after = min(retry_after, 20)
     time.sleep(retry_after)
     return False
@@ -185,24 +206,25 @@ class RestSession(Session):
         * loads JSON data
     """
 
-    def __init__(self, tokens: Tokens):
+    def __init__(self, *, tokens: Tokens, concurrent_requests: int):
         super().__init__()
         self._tokens = tokens
+        self._sem = Semaphore(concurrent_requests)
 
     def ep(self, path: str = None):
         path = path and f'/{path}' or ''
         return f'{self.BASE}{path}'
 
     @backoff.on_exception(backoff.constant, RestError, interval=0, giveup=_giveup_429)
-    def _request_w_response(self, method: str, *args, headers=None,
+    def _request_w_response(self, method: str, url: str, headers=None,
                             **kwargs) -> Tuple[Response, StrOrDict]:
         """
         low level API REST request with support for 429 rate limiting
 
         :param method: HTTP method
         :type method: str
-        :param args:
-        :type args:
+        :param url: URL
+        :type url: str
         :param headers: prepared headers for request
         :type headers: Optional[dict]
         :param kwargs: additional keyward args
@@ -210,11 +232,14 @@ class RestSession(Session):
         :return: Tuple of response object and body. Body can be text or dict (parsed from JSON body)
         :rtype:
         """
-        headers = headers or dict()
-        headers.update({'Authorization': f'Bearer {self._tokens.access_token}',
-                        'Content-type': 'application/json;charset=utf-8',
-                        'TrackingID': f'WXC_SIMPLE_{uuid.uuid4()}'})
-        with self.request(method, *args, headers=headers, **kwargs) as response:
+        request_headers = {'authorization': f'Bearer {self._tokens.access_token}',
+                           'content-type': 'application/json;charset=utf-8',
+                           'TrackingID': f'WXC_SIMPLE_{uuid.uuid4()}'}
+        if headers:
+            request_headers.update((k.lower(), v) for k, v in headers.items())
+        with self._sem:
+            response = self.request(method, url=url, headers=request_headers, **kwargs)
+        try:
             dump_response(response)
             try:
                 response.raise_for_status()
@@ -230,16 +255,18 @@ class RestSession(Session):
                 data = response.json()
             else:
                 data = response.text
+        finally:
+            response.close()
         return response, data
 
-    def _request(self, method: str, *args, **kwargs) -> StrOrDict:
+    def _request(self, method: str, url: str, **kwargs) -> StrOrDict:
         """
         low level API request only returning the body
 
         :param method: HTTP method
         :type method: str
-        :param args:
-        :type args:
+        :param url: URL
+        :type url: str
         :param headers: prepared headers for request
         :type headers: Optional[dict]
         :param kwargs: additional keyward args
@@ -247,7 +274,7 @@ class RestSession(Session):
         :return: body. Body can be text or dict (parsed from JSON body)
         :rtype: Unon
         """
-        _, data = self._request_w_response(method, *args, **kwargs)
+        _, data = self._request_w_response(method, url=url, **kwargs)
         return data
 
     def rest_get(self, *args, **kwargs) -> StrOrDict:
@@ -290,7 +317,7 @@ class RestSession(Session):
         self._request('DELETE', *args, **kwargs)
 
     def follow_pagination(self, *, url: str, model: Type[ApiModel],
-                          params: dict = None, **kwargs) -> Generator[ApiModel, None, None]:
+                          params: dict = None, item_key: str = None, **kwargs) -> Generator[ApiModel, None, None]:
         """
         Handling RFC5988 pagination of list requests. Generator of parsed objects
 
@@ -304,7 +331,7 @@ class RestSession(Session):
         """
         while url:
             log.debug(f'{self}.pagination: getting {url}')
-            response, data = self._request_w_response('GET', url, params=params, **kwargs)
+            response, data = self._request_w_response('GET', url=url, params=params, **kwargs)
             # params only in first request. In subsequent requests we rely on the completeness of the 'next' URL
             params = None
             # try to get the next page (if present)
@@ -313,6 +340,13 @@ class RestSession(Session):
             except KeyError:
                 url = None
             # return all items
-            items = data.get('items', [])
+            if item_key is None:
+                if 'items' in data:
+                    item_key = 'items'
+                else:
+                    # we go w/ the first return value that is a list
+                    item_key = next((k for k, v in data.items()
+                                     if isinstance(v, list)))
+            items = data.get(item_key)
             for item in items:
                 yield model.parse_obj(item)

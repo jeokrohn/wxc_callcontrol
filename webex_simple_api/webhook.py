@@ -17,12 +17,19 @@ class WebHookEvent(str, Enum):
     """
     The event type for the webhook.
     """
+    #: an object was created
     created = 'created'
+    #: an object was updated
     updated = 'updated'
+    #: an object was deleted
     deleted = 'deleted'
+    #: a meeting was started
     started = 'started'
+    #: a meeting was ended
     ended = 'ended'
+    #: a participant joined
     joined = 'joined'
+    #: a participant left
     left = 'left'
     all = 'all'
 
@@ -53,29 +60,34 @@ class WebHookCreate(ApiModel):
     owned_by: Optional[str]
 
 
+class WebHookStatus(str, Enum):
+    active = 'active'
+    inactive = 'inactive'
+
+
 class WebHook(ApiModel):
     #: The unique identifier for the webhook.
-    webhook_id: str = Field(alias='id')
+    webhook_id: Optional[str] = Field(alias='id')
     #: A user-friendly name for the webhook.
     name: str
     #: The URL that receives POST requests for each event.
     target_url: str
     #: The resource type for the webhook. Creating a webhook requires 'read' scope on the resource the webhook is for.
-    resource: WebHookResource
+    resource: Optional[WebHookResource]
     #: The event type for the webhook.
-    event: WebHookEvent
+    event: Optional[WebHookEvent]
     #: The filter that defines the webhook scope.
-    filter: str
+    filter: Optional[str]
     #: The secret used to generate payload signature.
-    secret: str
+    secret: Optional[str]
     #: The status of the webhook. Use active to reactivate a disabled webhook.
-    status: str
+    status: WebHookStatus
     #: The date and time the webhook was created.
     created: datetime.datetime
-    org_id: str
-    created_by: str
-    app_id: str
-    owned_by: str
+    org_id: Optional[str]
+    created_by: Optional[str]
+    app_id: Optional[str]
+    owned_by: Optional[str]
 
     @property
     def app_id_uuid(self) -> str:
@@ -135,6 +147,33 @@ class WebhookApi(ApiChild, base='webhooks'):
         result = WebHook.parse_obj(data)
         return result
 
+    def details(self, *, webhook_id: str) -> WebHook:
+        """
+        Get Webhook Details
+        Shows details for a webhook, by ID.
+
+        :param webhook_id: The unique identifier for the webhook.
+        :type webhook_id: str
+        :return: Webhook details
+        """
+        url = self.ep(webhook_id)
+        return WebHook.parse_obj(self.get(url))
+
+    def update(self, *, webhook_id: str, update: WebHook) -> WebHook:
+        """
+        Updates a webhook, by ID. You cannot use this call to deactivate a webhook, only to activate a webhook that
+        was auto deactivated. The fields that can be updated are name, targetURL, secret and status. All other fields,
+        if supplied, are ignored.
+        :param webhook_id: The unique identifier for the webhook.
+        :type webhook_id: str
+        :param update: The webhook update
+        :type update: WebHook
+        :return: updated :class:`WebHook` object
+        """
+        url = self.ep(webhook_id)
+        webhook_data = update.json(include={'name', 'target_url', 'secret', 'owned_by', 'status'})
+        return WebHook.parse_obj(self.put(url, data=webhook_data))
+
     def webhook_delete(self, *, webhook_id: str):
         """
         Deletes a webhook, by ID.
@@ -143,5 +182,5 @@ class WebhookApi(ApiChild, base='webhooks'):
         :type webhook_id: str
         :return: None
         """
-        ep = self.ep(f'webhooks/{webhook_id}')
+        ep = self.ep(f'{webhook_id}')
         self.delete(ep)

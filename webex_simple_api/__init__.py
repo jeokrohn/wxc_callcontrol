@@ -9,6 +9,7 @@ from .base import ApiModel, webex_id_to_uuid, to_camel
 from .licenses import LicensesAPI
 from .locations import LocationsAPI
 from .people import PeopleApi
+from .person_settings import PersonSettingsApi
 from .rest import RestSession, StrOrDict
 from .telephony import TelephonyApi
 from .webhook import WebhookApi
@@ -23,14 +24,21 @@ class WebexSimpleApi:
     A simple API implementing the endpoints needed for the simple demo
     """
 
-    def __init__(self, tokens: Tokens):
+    def __init__(self, *, tokens: Tokens, concurrent_requests: int = 40):
         #: :class:`rest.RestSession` used for all API requests
-        self.session = RestSession(tokens=tokens)
-        self.licenses = LicensesAPI(session=self.session)   #: Licenses API :class:`licenses.LicensesAPI`
-        self.locations = LocationsAPI(session=self.session)   #: Location API :class:`locations.LocationsApi`
-        self.people = PeopleApi(session=self.session)  #: People API :class:`people.PeopleApi`
-        self.telephony = TelephonyApi(session=self.session)  #: Telephony API :class:`telephony.TelephonyApi`
-        self.webhook = WebhookApi(session=self.session)  #: Webhook API :class:`webhook.WebhookApi`
+        self.session = RestSession(tokens=tokens, concurrent_requests=concurrent_requests)
+        #: Licenses API :class:`licenses.LicensesAPI`
+        self.licenses = LicensesAPI(session=self.session)
+        #: Location API :class:`locations.LocationsApi`
+        self.locations = LocationsAPI(session=self.session)
+        #: Person settings API: :class:`person_settings.PersonSettingsApi`
+        self.person_settings = PersonSettingsApi(session=self.session)
+        #: People API :class:`people.PeopleApi`
+        self.people = PeopleApi(session=self.session)
+        #: Telephony API :class:`telephony.TelephonyApi`
+        self.telephony = TelephonyApi(session=self.session)
+        #: Webhooks API :class:`webhook.WebhookApi`
+        self.webhook = WebhookApi(session=self.session)
 
     def close(self):
         self.session.close()

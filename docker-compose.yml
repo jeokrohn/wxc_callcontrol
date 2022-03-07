@@ -6,7 +6,7 @@ services:
       # expose ngrok client interface to host
       - 4040:4040
     depends_on:
-      - event_monitor
+      - wxc_cc_bot
     # redirect traffic to event_monitor service
     # command: http event_monitor:6001 --log stderr --log-level debug
     command: http wxc_cc_bot:6001
@@ -28,6 +28,4 @@ services:
       # inform bot of ngrok instance
       - NGROK_HOST=ngrok
       - REDIS_HOST=redis
-    volumes:
-      - ./event_monitor.yml:/app/event_monitor.yml
     command: gunicorn 'wxc_cc_bot:create_app()' --workers=1 -b :6001

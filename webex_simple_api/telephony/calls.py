@@ -1,5 +1,5 @@
 """
-Telephony types and API
+Webex Calling Call Control API and related data types
 """
 import datetime
 from collections.abc import Generator
@@ -8,12 +8,13 @@ from typing import Optional, Literal, List
 
 from pydantic import Field
 
-from .api_child import ApiChild
-from .base import ApiModel
+from ..webhook import WebHook
+from ..api_child import ApiChild
+from ..base import ApiModel
 
 __all__ = ['CallType', 'TelephonyEventParty', 'RedirectReason', 'Redirection', 'Recall', 'RecordingState',
            'Personality', 'CallState', 'TelephonyCall', 'TelephonyEventData', 'TelephonyEvent', 'DialResponse',
-           'CallsApi', 'TelephonyApi']
+           'CallsApi']
 
 
 class CallType(str, Enum):
@@ -168,18 +169,11 @@ class TelephonyEventData(TelephonyCall):
     event_timestamp: datetime.datetime
 
 
-class TelephonyEvent(ApiModel):
-    event_id: str = Field(alias='id')
-    name: str
-    target_url: str
+class TelephonyEvent(WebHook):
+    """
+    A telephony event on the webhook
+    """
     resource: Literal['telephony_calls']
-    event: str
-    org_id: str
-    created_by: str
-    app_id: str
-    owned_by: str
-    status: str
-    created: datetime.datetime
     actor_id: str
     data: TelephonyEventData
 
@@ -252,14 +246,3 @@ class CallsApi(ApiChild, base='telephony/calls'):
         ep = self.ep(call_id)
         data = self.get(ep)
         return TelephonyCall.parse_obj(data)
-
-
-class TelephonyApi(ApiChild, base='telephony'):
-    """
-    The telephony API. Child of :class:`WebexSimpleApi`
-    """
-
-    def __init__(self, session):
-        super().__init__(session=session)
-        #: calls APi :class:`CallsApi`
-        self.calls = CallsApi(session=session)

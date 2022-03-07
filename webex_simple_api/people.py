@@ -153,6 +153,26 @@ class Person(ApiModel):
         """
         return webex_id_to_uuid(self.person_id)
 
+    @property
+    def plus_e164(self) -> List[PhoneNumber]:
+        """
+        List of +E.164 phone numbers of the user
+        :return:
+        """
+        return self.phone_numbers and [number for number in self.phone_numbers
+                                       if number.value.startswith('+')] or []
+
+    @property
+    def tn(self) -> Optional[PhoneNumber]:
+        """
+        user's TN (first +E.164 number if any)
+        :return:
+        """
+        if not self.phone_numbers:
+            return None
+        return next((number for number in self.phone_numbers
+                     if number.value.startswith('+')), None)
+
 
 class PeopleApi(ApiChild, base='people'):
     """

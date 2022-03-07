@@ -15,10 +15,10 @@ class Tokens(BaseModel):
     Webex tokens
     """
     access_token: str  #: access token
-    expires_in: int  #: remaining lifetime at time of token creation
+    expires_in: Optional[int]  #: remaining lifetime at time of token creation
     expires_at: Optional[datetime.datetime]  #: expiration, calculated at time of token creation
     refresh_token: str  #: refresh token
-    refresh_token_expires_in: int   # remaining lifetime of refresh token at time of token creation
+    refresh_token_expires_in: Optional[int]   # remaining lifetime of refresh token at time of token creation
     refresh_token_expires_at: Optional[datetime.datetime]   #: expiration, calculated at time of token creation
     token_type: Literal['Bearer']
 

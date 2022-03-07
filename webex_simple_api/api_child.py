@@ -44,7 +44,7 @@ class ApiChild:
         :param kwargs:
         :return:
         """
-        return self.session.rest_get(*args, *kwargs)
+        return self.session.rest_get(*args, **kwargs)
 
     def post(self, *args, **kwargs) -> StrOrDict:
         """

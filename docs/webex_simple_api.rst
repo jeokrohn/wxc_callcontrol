@@ -52,6 +52,14 @@ webex_simple_api.people
    :undoc-members:
    :show-inheritance:
 
+webex_simple_api.person_settings
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: webex_simple_api.person_settings
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 webex_simple_api.telephony
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
