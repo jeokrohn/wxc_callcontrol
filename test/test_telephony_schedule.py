@@ -7,34 +7,14 @@ Unit test for Schedules
 import datetime
 import random
 import re
-from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import chain
-from typing import List, Union, Any, Optional
+from typing import List, Optional
 
 from base import TestCaseWithLog
 from webex_simple_api.locations import *
 from webex_simple_api.telephony.schedules import *
-
-
-def gather(fs: List[Future], return_exceptions: bool = False) -> Generator[Union[Any, Exception]]:
-    """
-    Gather results from a list of futures; similar to asyncio.gather
-    :param fs: list of futures
-    :type fs: List[Future]
-    :param return_exceptions: True: return exceptions; False: exceptions are raised
-    :return: List of results
-    """
-    r = []
-    for future in fs:
-        try:
-            yield future.result()
-        except Exception as e:
-            if return_exceptions:
-                yield e
-            else:
-                raise e
 
 
 @dataclass(init=False)
@@ -75,9 +55,9 @@ class TestScheduleList(TestWithLocations):
         :return: list of schedules
         """
         with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(list, self.api.telephony.schedules.list(location_id=location.location_id))
-                     for location in self.locations]
-            schedules = list(chain.from_iterable(gather(tasks)))
+            lists = pool.map(lambda loc: list(self.api.telephony.schedules.list(location_id=loc.location_id)),
+                             self.locations)
+            schedules = list(chain.from_iterable(lists))
         return schedules
 
     def test_001_list(self):
@@ -93,76 +73,80 @@ class TestScheduleList(TestWithLocations):
         Try to list by name
         """
         with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(list, self.api.telephony.schedules.list(location_id=location.location_id,
-                                                                         name='Germany 2'))
-                     for location in self.locations]
-            schedules = list(chain.from_iterable(gather(tasks)))
-        schedules: List[Schedule]
-        print(f'got {len(schedules)} schedules')
-        print('\n'.join(f'{s}' for s in schedules))
-        self.assertTrue(all(schedule.name.startswith('Germany 2') for schedule in schedules),
-                        'Not all schedule names start with the expected string')
+            lists = pool.map(lambda loc: self.api.telephony.schedules.list(location_id=loc.location_id,
+                                                                           name='Germany 2'),
+                             self.locations)
+            schedules = list(chain.from_iterable(lists))
+            schedules: List[Schedule]
+            print(f'got {len(schedules)} schedules')
+            print('\n'.join(f'{s}' for s in schedules))
+            self.assertTrue(all(schedule.name.startswith('Germany 2') for schedule in schedules),
+                            'Not all schedule names start with the expected string')
 
-    def test_003_list_business_hours(self):
+
+def test_003_list_business_hours(self):
+    """
+    List all business hours schedules in all locations
+    """
+    with ThreadPoolExecutor() as pool:
+        lists = pool.map(lambda loc: list(self.api.telephony.schedules.list(location_id=loc.location_id,
+                                                                            schedule_type=ScheduleType.business_hours)),
+                         self.locations)
+        schedules = list(chain.from_iterable(lists))
+    schedules: List[Schedule]
+    print(f'got {len(schedules)} schedules')
+    print('\n'.join(f'{s}' for s in schedules))
+    self.assertTrue(all(schedule.schedule_type == ScheduleType.business_hours for schedule in schedules),
+                    'Schedule tyoe mismatch')
+
+
+def test_004_all_detail(self):
+    """
+    Get details of all schedules
+    """
+    schedules = self.all_schedules()
+    with ThreadPoolExecutor() as pool:
+        details = pool.map(lambda schedule: self.api.telephony.schedules.details(**schedule.selector),
+                           schedules)
+        details = list(details)
+    # no tests: we actually only want to test if there are any issues with parsing existing schedules
+
+
+def test_005_all_event_details(self):
+    """
+    Get all event details of all schedules
+    """
+    schedules = self.all_schedules()
+
+    def schedule_event_details(schedule: Schedule):
         """
-        List all business hours schedules in all locations
+        get details of all events in given schedule
+        :param schedule: schedule
+        :type schedule: Schedule
+        :return: list of schedules
         """
+        details = self.api.telephony.schedules.details(
+            location_id=schedule.location_id,
+            schedule_type=schedule.schedule_type,
+            schedule_id=schedule.schedule_id)
+        details: Schedule
+        if not details.events:
+            return list()
         with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(list, self.api.telephony.schedules.list(location_id=location.location_id,
-                                                                         schedule_type=ScheduleType.business_hours))
-                     for location in self.locations]
-            schedules = list(chain.from_iterable(gather(tasks)))
-        schedules: List[Schedule]
-        print(f'got {len(schedules)} schedules')
-        print('\n'.join(f'{s}' for s in schedules))
-        self.assertTrue(all(schedule.schedule_type == ScheduleType.business_hours for schedule in schedules),
-                        'Schedule tyoe mismatch')
+            event_details = pool.map(
+                lambda event: self.api.telephony.schedules.event_details(location_id=schedule.location_id,
+                                                                         schedule_type=schedule.schedule_type,
+                                                                         schedule_id=schedule.schedule_id,
+                                                                         event_id=event.event_id),
+                details.events)
+            event_details = list(event_details)
+        return event_details
 
-    def test_004_all_detail(self):
-        """
-        Get details of all schedules
-        """
-        schedules = self.all_schedules()
-        with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(self.api.telephony.schedules.details, **schedule.selector)
-                     for schedule in schedules]
-            details = list(gather(tasks))
-        # no tests: we actually only want to test if there are any issues with parsing existing schedules
-
-    def test_005_all_event_details(self):
-        """
-        Get all event details of all schedules
-        """
-        schedules = self.all_schedules()
-
-        def schedule_event_details(schedule: Schedule):
-            """
-            get details of all events in given schedule
-            :param schedule: schedule
-            :type schedule: Schedule
-            :return: list of schedules
-            """
-            details = self.api.telephony.schedules.details(
-                location_id=schedule.location_id,
-                schedule_type=schedule.schedule_type,
-                schedule_id=schedule.schedule_id)
-            details: Schedule
-            if not details.events:
-                return list()
-            with ThreadPoolExecutor() as pool:
-                tasks = [pool.submit(self.api.telephony.schedules.event_details,
-                                     location_id=schedule.location_id,
-                                     schedule_type=schedule.schedule_type,
-                                     schedule_id=schedule.schedule_id,
-                                     event_id=event.event_id)
-                         for event in details.events]
-                event_details = list(gather(tasks))
-            return event_details
-
-        with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(schedule_event_details, schedule) for schedule in schedules]
-            event_details = list(chain.from_iterable(gather(tasks)))
-        print(f'Got details of {len(event_details)} events in {len(schedules)} schedules.')
+    with ThreadPoolExecutor() as pool:
+        event_details = pool.map(lambda schedule: schedule_event_details(schedule),
+                                 schedules)
+        event_details = list(chain.from_iterable(event_details))
+    print(f'Got details of {len(event_details)} events in {len(schedules)} schedules.')
 
 
 @dataclass(init=False)
@@ -182,11 +166,12 @@ class TestWithTestSchedules(TestWithLocations):
         if not cls.locations:
             cls.test_schedules = None
             return
+
         with ThreadPoolExecutor() as pool:
-            tasks = [pool.submit(list, cls.api.telephony.schedules.list(location_id=location.location_id,
-                                                                        name='test_'))
-                     for location in cls.locations]
-            cls.test_schedules = list(chain.from_iterable(gather(tasks)))
+            tasks = pool.map(lambda loc: list(cls.api.telephony.schedules.list(location_id=loc.location_id,
+                                                                               name='test_')),
+                             cls.locations)
+            cls.test_schedules = list(chain.from_iterable(tasks))
         cls.test_schedules: List[Schedule]
         cls.test_schedules = [schedule
                               for schedule in cls.test_schedules
@@ -215,7 +200,7 @@ class TestCreate(TestWithTestSchedules):
         details = self.api.telephony.schedules.details(location_id=target_location.location_id,
                                                        schedule_type=schedule.schedule_type,
                                                        schedule_id=schedule_id)
-        print(f'created schedule: {target_location.name}/{schedule_name}/{id}')
+        print(f'created schedule: {target_location.name}/{schedule_name}/{schedule_id}')
         self.assertEqual(len(schedule.events), len(details.events))
         self.assertEqual(schedule.name, details.name)
 

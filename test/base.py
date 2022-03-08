@@ -14,8 +14,9 @@ import time
 import urllib.parse
 import uuid
 import webbrowser
+from collections.abc import Iterable, Generator
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any, Union
 from unittest import TestCase
 
 import requests
@@ -28,7 +29,28 @@ from webex_simple_api import WebexSimpleApi
 
 log = logging.getLogger(__name__)
 
-__all__ = ['TestCaseWithTokens', 'TestCaseWithLog']
+__all__ = ['TestCaseWithTokens', 'TestCaseWithLog', 'gather']
+
+
+def gather(mapping: Iterable[Any], return_exceptions: bool = False) -> Generator[Union[Any, Exception]]:
+    """
+    Gather results from a threading.map() call;  similar to asyncio.gather
+    :param mapping: result of a threading.map() call
+    :type fs: List[Future]
+    :param return_exceptions: True: return exceptions; False: exceptions are raised
+    :return: List of results
+    """
+    it = iter(mapping)
+    while True:
+        try:
+            yield next(it)
+        except StopIteration:
+            break
+        except Exception as e:
+            if return_exceptions:
+                yield e
+            else:
+                raise e
 
 
 class AdminIntegration(Integration):
@@ -167,7 +189,7 @@ def get_tokens() -> Optional[Tokens]:
     :rtype: Tokens
     """
 
-    def yml_path()->str:
+    def yml_path() -> str:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'testtoken.yml')
         return path
 
@@ -208,6 +230,7 @@ class TestCaseWithTokens(TestCase):
     """
     A test case that required access tokens to run
     """
+
     @classmethod
     def setUpClass(cls) -> None:
         tokens = get_tokens()

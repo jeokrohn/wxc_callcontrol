@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Callable
 
-from base import TestCaseWithLog
+from base import TestCaseWithLog, gather
 from webex_simple_api.people import Person
 from webex_simple_api.person_settings import *
 
@@ -27,15 +27,8 @@ class TestCaseWithUsers(TestCaseWithLog):
 class TestRead(TestCaseWithUsers):
     def execute_read_test(self, f: Callable):
         with ThreadPoolExecutor() as pool:
-            futures = [pool.submit(f, person_id=user.person_id)
-                       for user in self.users]
-        results = []
-        for future in futures:
-            try:
-                result = future.result()
-            except Exception as e:
-                result = e
-            results.append(result)
+            result_map = pool.map(lambda user: f(person_id=user.person_id), self.users)
+            results = list(gather(result_map, return_exceptions=True))
         return results
 
     def test_001_read_barge(self):

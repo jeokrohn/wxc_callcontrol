@@ -7,9 +7,9 @@ import time
 import uuid
 from collections.abc import Generator
 from io import TextIOBase, StringIO
+from threading import Semaphore
 from typing import List, Union, Tuple, Type, Optional
 from urllib.parse import parse_qsl
-from threading import Semaphore
 
 import backoff
 from pydantic import BaseModel, ValidationError
@@ -194,7 +194,6 @@ def _giveup_429(e: RestError) -> bool:
 
 StrOrDict = Union[str, dict]
 
-
 class RestSession(Session):
     BASE = 'https://webexapis.com/v1'
     """
@@ -234,7 +233,7 @@ class RestSession(Session):
         """
         request_headers = {'authorization': f'Bearer {self._tokens.access_token}',
                            'content-type': 'application/json;charset=utf-8',
-                           'TrackingID': f'WXC_SIMPLE_{uuid.uuid4()}'}
+                           'TrackingID': f'SIMPLE_{uuid.uuid4()}'}
         if headers:
             request_headers.update((k.lower(), v) for k, v in headers.items())
         with self._sem:
@@ -247,7 +246,7 @@ class RestSession(Session):
                 # create a RestError based on HTTP error
                 error = RestError(error.args[0], response=error.response)
                 raise error
-            # get response body as text pr dict (parsed JSON)
+            # get response body as text or dict (parsed JSON)
             ct = response.headers.get('Content-Type')
             if not ct:
                 data = ''
@@ -327,6 +326,8 @@ class RestSession(Session):
         :type model: ApiModel
         :param params: URL parameters, optional
         :type params: Optional[dict]
+        :param item_key: key to list of values
+        :type item_key: str
         :return: yields parsed objects
         """
         while url:
