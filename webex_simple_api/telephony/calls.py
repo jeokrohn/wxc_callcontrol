@@ -4,7 +4,7 @@ Webex Calling Call Control API and related data types
 import datetime
 from collections.abc import Generator
 from enum import Enum
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Union
 
 from pydantic import Field
 
@@ -12,8 +12,9 @@ from ..webhook import WebHook
 from ..api_child import ApiChild
 from ..base import ApiModel
 
-__all__ = ['CallType', 'TelephonyEventParty', 'RedirectReason', 'Redirection', 'Recall', 'RecordingState',
+__all__ = ['CallType', 'TelephonyParty', 'RedirectReason', 'Redirection', 'Recall', 'RecordingState',
            'Personality', 'CallState', 'TelephonyCall', 'TelephonyEventData', 'TelephonyEvent', 'DialResponse',
+           'HistoryType', 'CallHistoryRecord',
            'CallsApi']
 
 
@@ -29,7 +30,7 @@ class CallType(str, Enum):
     other = 'other'
 
 
-class TelephonyEventParty(ApiModel):
+class TelephonyParty(ApiModel):
     """
     Representation of a calling/called party of a Webex Calling call
     """
@@ -71,7 +72,7 @@ class Redirection(ApiModel):
     #: The reason the incoming call was redirected.
     reason: RedirectReason
     #: The details of a party who redirected the incoming call.
-    redirecting_party: TelephonyEventParty
+    redirecting_party: TelephonyParty
 
 
 class Recall(ApiModel):
@@ -84,7 +85,7 @@ class Recall(ApiModel):
     #: If the type is park, contains the details of where the call was parked. For example, if user A parks a call
     #: against user B and A is recalled for the park, then this field contains B's information in A's incoming call
     #: details. Only present when the type is park.
-    party: TelephonyEventParty
+    party: TelephonyParty
 
 
 class RecordingState(str, Enum):
@@ -142,7 +143,7 @@ class TelephonyCall(ApiModel):
     state: CallState
     #: The remote party's details. For example, if user A calls user B then B is the remote party in A's outgoing call
     #: details and A is the remote party in B's incoming call details.
-    remote_party: TelephonyEventParty
+    remote_party: TelephonyParty
     #: The appearance value for the call. The appearance value can be used to display the user's calls in an order
     #: consistent with the user's devices. Only present when the call has an appearance value assigned.
     appearance: Optional[int]
@@ -184,6 +185,35 @@ class DialResponse(ApiModel):
     """
     call_id: str
     call_session_id: str
+
+
+class HistoryType(str, Enum):
+    placed = 'placed'
+    missed = 'missed'
+    received = 'received'
+
+    @staticmethod
+    def history_type_or_str(v: Union[str, 'HistoryType']) -> 'HistoryType':
+        if isinstance(v, HistoryType):
+            return v
+        return HistoryType(v)
+
+
+class CallHistoryRecord(ApiModel):
+    #: The type of call history record.
+    call_type: HistoryType = Field(alias='type')
+    #: The name of the called/calling party. Only present when the name is available and privacy is not enabled.
+    name: Optional[str]
+    #: The number of the called/calling party. Only present when the number is available and privacy is not enabled.
+    #: The number can be digits or a URI. Some examples for number include: 1234, 2223334444, +12223334444, *73,
+    #: user@company.domain
+    number: Optional[str]
+    #: Indicates whether privacy is enabled for the name and number.
+    privacy_enabled: bool
+    #: The date and time the call history record was created. For a placed call history record, this is when the call
+    #: was placed. For a missed call history record, this is when the call was disconnected. For a received call
+    #: history record, this is when the call was answered.
+    time: datetime.datetime
 
 
 class CallsApi(ApiChild, base='telephony/calls'):
@@ -246,3 +276,34 @@ class CallsApi(ApiChild, base='telephony/calls'):
         ep = self.ep(call_id)
         data = self.get(ep)
         return TelephonyCall.parse_obj(data)
+
+    def call_history(self, history_type: Union[str, HistoryType] = None) -> Generator[CallHistoryRecord, None, None]:
+        """
+        List Call History
+        Get the list of call history records for the user. A maximum of 20 call history records per type (placed,
+        missed, received) are returned.
+
+        :param history_type: The type of call history records to retrieve. If not specified, then all call history
+            records are retrieved.
+            Possible values: placed, missed, received
+        :type history_type: HistoryType or str
+        :return: yields :class:`CallHistoryRecord` objects
+        """
+        history_type = history_type and HistoryType.history_type_or_str(history_type)
+        params = history_type and {'type': history_type.value} or None
+        url = self.ep('history')
+        return self.session.follow_pagination(url=url, model=CallHistoryRecord, params=params)
+
+    # TODO: implement missing endpoints
+    #   * reject
+    #   * hold
+    #   * resume
+    #   * divert
+    #   * transfer
+    #   * park
+    #   * retrieve
+    #   * start/stop/pause/resume recording
+    #   * transmit DTMF
+    #   * push
+    #   * pickup
+    #   * barge in

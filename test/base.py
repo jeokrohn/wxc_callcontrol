@@ -18,6 +18,7 @@ from collections.abc import Iterable, Generator
 from dataclasses import dataclass
 from typing import Optional, Any, Union
 from unittest import TestCase
+from dotenv import load_dotenv
 
 import requests
 import yaml
@@ -57,43 +58,25 @@ class AdminIntegration(Integration):
     """
     The integration we want to use to get tokens for the test cases
     """
-    scopes = ['spark-admin:broadworks_subscribers_write', 'meeting:admin_preferences_write', 'spark:all',
-              'meeting:admin_preferences_read', 'analytics:read_all', 'meeting:admin_participants_read',
-              'spark-admin:people_write', 'spark:people_write', 'spark:organizations_read',
-              'spark-admin:workspace_metrics_read', 'spark-admin:places_read',
-              'spark-compliance:team_memberships_write', 'spark:places_read', 'spark-compliance:messages_read',
-              'spark-admin:devices_write', 'spark-admin:workspaces_write', 'spark:calls_write',
-              'spark-compliance:meetings_write', 'meeting:admin_schedule_write', 'identity:placeonetimepassword_create',
-              'spark-admin:organizations_write', 'spark-admin:workspace_locations_read', 'spark:devices_write',
-              'spark-admin:broadworks_billing_reports_write', 'spark:xapi_commands', 'spark-compliance:webhooks_read',
-              'spark-admin:call_qualities_read', 'spark-compliance:messages_write', 'spark:kms',
-              'meeting:participants_write', 'meeting:admin_transcripts_read', 'spark-admin:people_read',
-              'spark-compliance:memberships_read', 'spark-admin:resource_groups_read', 'meeting:recordings_read',
-              'meeting:participants_read', 'meeting:preferences_write', 'meeting:admin_recordings_read',
-              'spark-admin:organizations_read', 'spark-compliance:webhooks_write', 'meeting:transcripts_read',
-              'spark:xapi_statuses', 'meeting:schedules_write', 'spark-compliance:team_memberships_read',
-              'spark-admin:devices_read', 'meeting:controls_read', 'spark-admin:hybrid_clusters_read',
-              'spark-admin:workspace_locations_write', 'spark-admin:telephony_config_read',
-              'spark-admin:telephony_config_write', 'spark-admin:broadworks_billing_reports_read',
-              'spark-admin:broadworks_enterprises_write', 'meeting:admin_schedule_read', 'meeting:schedules_read',
-              'spark-compliance:memberships_write', 'spark-admin:broadworks_enterprises_read', 'spark:calls_read',
-              'spark-admin:roles_read', 'meeting:recordings_write', 'meeting:preferences_read',
-              'spark-compliance:meetings_read', 'spark-admin:workspaces_read', 'spark:devices_read',
-              'spark-admin:resource_group_memberships_read', 'spark-compliance:events_read',
-              'spark-admin:resource_group_memberships_write', 'spark-compliance:rooms_read',
-              'spark-admin:broadworks_subscribers_read', 'meeting:controls_write', 'meeting:admin_recordings_write',
-              'spark-admin:hybrid_connectors_read', 'audit:events_read', 'spark-compliance:teams_read',
-              'spark-admin:places_write', 'spark-admin:licenses_read', 'spark-compliance:rooms_write',
-              'spark:places_write']
 
     @property
     def redirect_url(self) -> str:
         return 'http://localhost:6001/redirect'
 
     def __init__(self):
+        # get client id and client secret from .env in test directory
+        dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+        load_dotenv(dotenv_path=dotenv_path)
+        client_id = os.getenv('ADMIN_CLIENT_ID')
+        client_secret = os.getenv('ADMIN_CLIENT_SECRET')
+        scopes = os.getenv('ADMIN_CLIENT_SCOPES')
+        if not all((client_id, client_secret, scopes)):
+            raise ValueError('ADMIN_CLIENT_ID, ADMIN_CLIENT_SECRET, and ADMIN_CLIENT_SCOPES environment variables '
+                             'required')
         super().__init__(
-            client_id="C842df6bef07f0674f3cb04397d7cb9c2028b31e722b0bbfc81697ed14c6ed0dc",
-            client_secret='2f4008d0b9f7db2d481a8f4aadbb8d54eb381655b7241f9a0296f569ef287f5c')
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes)
 
 
 def get_tokens_from_oauth_flow(integration: Integration) -> Optional[Tokens]:
@@ -103,7 +86,7 @@ def get_tokens_from_oauth_flow(integration: Integration) -> Optional[Tokens]:
     start a local webserver on port 6001 o serve the last step in the OAuth flow
 
     :param integration: Integration to use for the flow
-    :type Integration
+    :type: Integration
     :return: set of new tokens if successful, else None
     :rtype: Tokens
     """

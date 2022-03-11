@@ -1,10 +1,14 @@
 # rename this to .env and set values
 
-# client ID for integration to be used. needs scopes as defined in class event_monitor.Integration
+# client ID for integration to be used.
+# required scopes: spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read spark:people_read
 WXC_CC_INTEGRATION_CLIENT_ID=
 
 # client secret of integration
 WXC_CC_INTEGRATION_CLIENT_SECRET=
+
+# scopes to request
+WXC_CC_INTEGRATION_CLIENT_SCOPES="spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read spark:people_read"
 
 # bot email address
 WXC_CC_BOT_EMAIL=

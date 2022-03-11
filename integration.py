@@ -24,11 +24,8 @@ class Integration:
     client_id: str  #: integration's client id, obtained from developer.webex.com
     client_secret: str  #: integration's client id, obtained from developer.webex.com
 
-    # TODO: find out which scopes are actually required
     #: OAuth scopes of the integration
-    scopes = 'spark:calls_write spark:all spark:kms spark:calls_read spark-admin:telephony_config_read ' \
-             'spark-admin:telephony_config_write spark-admin:people_read'
-    # scopes = 'spark:people_read spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read'
+    scopes: str
 
     #: URL of the authorization service; used as part of the URL to start an OAuth flow
     auth_service = 'https://webexapis.com/v1/authorize'

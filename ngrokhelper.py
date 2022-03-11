@@ -64,7 +64,7 @@ def get_public_url(local_port: int) -> str:
 
         # start ngrok process
         log.debug(f'NGROK_HOST not set, starting ngrok, command: {cmd}')
-        subprocess.Popen(cmd.split())
+        subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         ngrok_host = 'localhost'
     # simply poll the running ngrok for public address
     bot_url = poll_ngrok_for_url(host=ngrok_host)

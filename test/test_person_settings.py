@@ -35,7 +35,7 @@ class TestRead(TestCaseWithUsers):
         """
         read_barge for all users
         """
-        results = self.execute_read_test(self.api.person_settings.barge_read)
+        results = self.execute_read_test(self.api.person_settings.barge.read)
         for e in (r for r in results if isinstance(r, Exception)):
             print(f'{e}')
         self.assertFalse(any(isinstance(r, Exception) for r in results))
@@ -44,7 +44,7 @@ class TestRead(TestCaseWithUsers):
         """
         read_barge for all users
         """
-        results = self.execute_read_test(self.api.person_settings.forwarding_read)
+        results = self.execute_read_test(self.api.person_settings.forwarding.read)
         for e in (r for r in results if isinstance(r, Exception)):
             print(f'{e}')
         self.assertFalse(any(isinstance(r, Exception) for r in results))
@@ -53,7 +53,7 @@ class TestRead(TestCaseWithUsers):
         """
         read_barge for all users
         """
-        results = self.execute_read_test(self.api.person_settings.call_intercept_read)
+        results = self.execute_read_test(self.api.person_settings.call_intercept.read)
         for e in (r for r in results if isinstance(r, Exception)):
             print(f'{e}')
         self.assertFalse(any(isinstance(r, Exception) for r in results))
@@ -62,7 +62,7 @@ class TestRead(TestCaseWithUsers):
         """
         read call recording settings for all users
         """
-        results = self.execute_read_test(self.api.person_settings.call_recording_read)
+        results = self.execute_read_test(self.api.person_settings.call_recording.read)
         for e in (r for r in results if isinstance(r, Exception)):
             print(f'{e}')
         self.assertFalse(any(isinstance(r, Exception) for r in results))
@@ -71,7 +71,7 @@ class TestRead(TestCaseWithUsers):
         """
         read caller id settings for all users
         """
-        results = self.execute_read_test(self.api.person_settings.caller_id_read)
+        results = self.execute_read_test(self.api.person_settings.caller_id.read)
         for e in (r for r in results if isinstance(r, Exception)):
             print(f'{e}')
         self.assertFalse(any(isinstance(r, Exception) for r in results))
@@ -97,7 +97,7 @@ class TestConfigure(TestCaseWithUsers):
             pick a random user, save barge setting and restore setting after end of test
             """
             target_user = random.choice(self.users)
-            barge_settings = self.api.person_settings.barge_read(person_id=target_user.person_id)
+            barge_settings = self.api.person_settings.barge.read(person_id=target_user.person_id)
             print(f'target user: {target_user.display_name}: enabled: {barge_settings.enabled}, tone enabled: '
                   f'{barge_settings.tone_enabled}')
             try:
@@ -105,7 +105,7 @@ class TestConfigure(TestCaseWithUsers):
             finally:
                 # restore barge settings
                 print(f'restore enabled: {barge_settings.enabled}, tone enabled: {barge_settings.tone_enabled}')
-                self.api.person_settings.barge_configure(person_id=target_user.person_id,
+                self.api.person_settings.barge.configure(person_id=target_user.person_id,
                                                          barge_settings=barge_settings)
 
         def update_and_check(barge_settings: BargeSettings):
@@ -113,8 +113,8 @@ class TestConfigure(TestCaseWithUsers):
             Update and verify barge settings
             """
             print(f'Setting enabled: {barge_settings.enabled}, tone enabled: {barge_settings.tone_enabled}')
-            self.api.person_settings.barge_configure(person_id=user.person_id, barge_settings=barge_settings)
-            after = self.api.person_settings.barge_read(person_id=user.person_id)
+            self.api.person_settings.barge.configure(person_id=user.person_id, barge_settings=barge_settings)
+            after = self.api.person_settings.barge.read(person_id=user.person_id)
             self.assertEqual(barge_settings, after)
             return
 
@@ -136,22 +136,22 @@ class TestConfigure(TestCaseWithUsers):
         pick a random user, save call intercept setting and restore setting after end of test
         """
         target_user = random.choice(self.users)
-        settings = self.api.person_settings.call_intercept_read(person_id=target_user.person_id)
+        settings = self.api.person_settings.call_intercept.read(person_id=target_user.person_id)
         print(f'target user: {target_user.display_name}: {settings} ')
         try:
             yield target_user
         finally:
             # restore settings
             print(f'restore {settings}')
-            self.api.person_settings.call_intercept_configure(person_id=target_user.person_id, intercept=settings)
+            self.api.person_settings.call_intercept.configure(person_id=target_user.person_id, intercept=settings)
 
     def call_intercept_update_and_check(self, user: Person, settings: InterceptSetting):
         """
         Update and verify call interceptsettings
         """
         print(f'setting: {settings}')
-        self.api.person_settings.call_intercept_configure(person_id=user.person_id, intercept=settings)
-        after = self.api.person_settings.call_intercept_read(person_id=user.person_id)
+        self.api.person_settings.call_intercept.configure(person_id=user.person_id, intercept=settings)
+        after = self.api.person_settings.call_intercept.read(person_id=user.person_id)
         self.assertEqual(settings, after)
         return
 
@@ -175,8 +175,8 @@ class TestConfigure(TestCaseWithUsers):
         """
         with self.call_intercept_user_context() as user:
             ps = self.api.person_settings
-            ps.call_intercept_greeting(person_id=user.person_id, content=self.wav_path)
-            intercept = ps.call_intercept_read(person_id=user.person_id)
+            ps.call_intercept.greeting(person_id=user.person_id, content=self.wav_path)
+            intercept = ps.call_intercept.read(person_id=user.person_id)
         self.assertEqual(os.path.basename(self.wav_path), intercept.incoming.announcements.file_name)
 
     def test_007_upload_intercept_greeting_from_open_file(self):
@@ -188,9 +188,9 @@ class TestConfigure(TestCaseWithUsers):
             with open(self.wav_path, mode='rb') as wav_file:
                 upload_as = f'w{uuid.uuid4()}.wav'
                 ps = self.api.person_settings
-                ps.call_intercept_greeting(person_id=user.person_id, content=wav_file,
+                ps.call_intercept.greeting(person_id=user.person_id, content=wav_file,
                                            upload_as=upload_as)
-                intercept = ps.call_intercept_read(person_id=user.person_id)
+                intercept = ps.call_intercept.read(person_id=user.person_id)
         self.assertEqual(upload_as, intercept.incoming.announcements.file_name)
 
     def test_008_incoming_intercept_with_custom_greeting(self):
@@ -199,19 +199,19 @@ class TestConfigure(TestCaseWithUsers):
         """
         with self.call_intercept_user_context() as user:
             ps = self.api.person_settings
-            intercept = ps.call_intercept_read(person_id=user.person_id)
+            intercept = ps.call_intercept.read(person_id=user.person_id)
             intercept.incoming.intercept_type = InterceptTypeIncoming.intercept_all
             intercept.incoming.announcements.greeting = Greeting.custom
 
             # first upload custom greeting
             with open(self.wav_path, mode='rb') as file:
                 upload_as = f'w{uuid.uuid4()}.wav'
-                ps.call_intercept_greeting(person_id=user.person_id, content=file,
+                ps.call_intercept.greeting(person_id=user.person_id, content=file,
                                            upload_as=upload_as)
-            intermediate = ps.call_intercept_read(person_id=user.person_id)
+            intermediate = ps.call_intercept.read(person_id=user.person_id)
             # .. and then set the greeting to custom
-            ps.call_intercept_configure(person_id=user.person_id, intercept=intercept)
-            updated = ps.call_intercept_read(person_id=user.person_id)
+            ps.call_intercept.configure(person_id=user.person_id, intercept=intercept)
+            updated = ps.call_intercept.read(person_id=user.person_id)
 
         # validation
         self.assertEqual(upload_as, intermediate.incoming.announcements.file_name)
@@ -237,13 +237,13 @@ class TestCallerIdConfigure(TestCaseWithUsers):
 
         # get caller id settings
         ps = self.api.person_settings
-        caller_id = ps.caller_id_read(person_id=target_user.person_id)
+        caller_id = ps.caller_id.read(person_id=target_user.person_id)
         try:
             yield random.choice(candidates)
         finally:
             # restore caller id settings
             restore = caller_id.configure_params()
-            ps.caller_id_configure(person_id=target_user.person_id, **restore)
+            ps.caller_id.configure(person_id=target_user.person_id, **restore)
         return
 
     def test_set_direct_line(self):
@@ -253,8 +253,8 @@ class TestCallerIdConfigure(TestCaseWithUsers):
         """
         with self.user_context(users_with_tn=True) as user:
             ps = self.api.person_settings
-            ps.caller_id_configure(person_id=user.person_id, selected=CallerIdSelectedType.direct_line)
-            after = ps.caller_id_read(person_id=user.person_id)
+            ps.caller_id.configure(person_id=user.person_id, selected=CallerIdSelectedType.direct_line)
+            after = ps.caller_id.read(person_id=user.person_id)
             self.assertEqual(CallerIdSelectedType.direct_line, after.selected)
 
     def test_set_location_number(self):
@@ -264,8 +264,8 @@ class TestCallerIdConfigure(TestCaseWithUsers):
         """
         with self.user_context(users_with_tn=True) as user:
             ps = self.api.person_settings
-            ps.caller_id_configure(person_id=user.person_id, selected=CallerIdSelectedType.location_number)
-            after = ps.caller_id_read(person_id=user.person_id)
+            ps.caller_id.configure(person_id=user.person_id, selected=CallerIdSelectedType.location_number)
+            after = ps.caller_id.read(person_id=user.person_id)
             self.assertEqual(CallerIdSelectedType.location_number, after.selected)
 
     def set_custom(self):

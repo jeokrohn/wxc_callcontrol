@@ -29,16 +29,16 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
+# local port the Flask server for webhook notifications is runnjing on
 LOCAL_BOT_PORT = 6001
 
 
 def catch_exception(f):
     """
-    Wrapper to catch and log exceptions which led to termination of a thread
+    Decorator to catch and log exceptions which led to termination of a thread
 
     :meta private:
     """
-
     @wraps(f)
     def wrapper(*args, **kwargs):
         try:
@@ -62,20 +62,17 @@ class CallControlBot(TeamsBot):
     def __init__(self,
                  *,
                  teams_bot_name,
-                 teams_bot_token=None,
-                 teams_bot_email=None,
-                 teams_bot_url=None,
-                 client_id: str = None,
-                 client_secret: str = None,
+                 teams_bot_token,
+                 teams_bot_email,
+                 teams_bot_url,
+                 client_id,
+                 client_secret,
+                 client_scopes,
                  debug=False, **kwargs):
         super().__init__(teams_bot_name=teams_bot_name,
                          teams_bot_token=teams_bot_token,
                          teams_bot_email=teams_bot_email,
                          teams_bot_url=teams_bot_url,
-                         approved_users=['jkrohn@cisco.com',
-                                         'cbarr@tmedemo.com',
-                                         'shewitt@tmedemo.com',
-                                         'jeokrohn+duharris@gmail.com'],
                          debug=debug, **kwargs)
         # our commands
         self.add_command('/auth', 'authenticate user: /auth [clear|force|maintenance]', self.auth_callback)
@@ -83,8 +80,9 @@ class CallControlBot(TeamsBot):
         self.add_command('/dial', 'dial a number', self.dial_callback)
         self.add_command('/answer', 'answer alerting call', self.answer_callback)
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
+        self.add_command('/history', 'get call history', self.call_history_callback)
 
-        self._integration = Integration(client_id=client_id, client_secret=client_secret)
+        self._integration = Integration(client_id=client_id, client_secret=client_secret, scopes=client_scopes)
         redis_host = os.getenv('REDIS_HOST')
         redis_url = os.getenv('REDIS_TLS_URL') or os.getenv('REDIS_URL')
         if redis_host or redis_url:
@@ -108,6 +106,7 @@ class CallControlBot(TeamsBot):
         :param user_id:
         :type user_id: str
         :return: generated URL
+        :rtype: str
         :meta private:
         """
         return f'{self.teams_bot_url}/callevent/{user_id}'
@@ -225,6 +224,7 @@ class CallControlBot(TeamsBot):
 
         if len(line) > 2 or len(line) == 2 and line[1] not in ['clear', 'force', 'maintenance']:
             usage()
+        # handle actual authentication in thread to prevent delaying the response to the POST on the Webhook URL
         self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
         return ''
 
@@ -466,6 +466,27 @@ class CallControlBot(TeamsBot):
         self._thread_pool.submit(process)
         return ''
 
+    def call_history_callback(self, message: Message):
+        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        if user_context is None or not user_context.tokens.access_token:
+            return f'User {message.personEmail} not authenticated. Use /auth command first'
+
+        @catch_exception
+        def process():
+            """
+            Actually process the command in separate thread
+            :return:
+            """
+            with WebexSimpleApi(tokens=user_context.tokens) as api:
+                history = list(api.telephony.calls.call_history())
+            history.sort(key=lambda h: h.time)
+            text = '\n'.join(f'{h.time}, {h.call_type.name:10} - {h.number} ({h.name})' for h in history)
+            self.teams.messages.create(toPersonId=message.personId,
+                                       text=text)
+
+        self._thread_pool.submit(process)
+        return ''
+
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(process)d] %(threadName)s %(levelname)s %(name)s %('
                                                 'message)s')
@@ -480,8 +501,8 @@ def create_app() -> CallControlBot:
     :return: the Flask app object
     :rtype: CallControlBot
     """
-    # determine public URL for Bot
 
+    # determine public URL for Bot
     heroku_name = os.getenv('HEROKU_NAME')
     if heroku_name is None:
         log.debug('not running on Heroku. Using ngrok to obtain a public URL')
@@ -497,10 +518,11 @@ def create_app() -> CallControlBot:
     bot_app_name = os.getenv('WXC_CC_BOT_NAME')
     client_id = os.getenv('WXC_CC_INTEGRATION_CLIENT_ID')
     client_secret = os.getenv('WXC_CC_INTEGRATION_CLIENT_SECRET')
+    client_scopes = os.getenv('WXC_CC_INTEGRATION_CLIENT_SCOPES')
 
     bot = CallControlBot(teams_bot_name=bot_app_name, teams_bot_token=teams_token,
                          teams_bot_url=bot_url, teams_bot_email=bot_email, debug=True,
-                         client_id=client_id, client_secret=client_secret)
+                         client_id=client_id, client_secret=client_secret, client_scopes=client_scopes)
     return bot
 
 
