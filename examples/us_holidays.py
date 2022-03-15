@@ -1,20 +1,20 @@
 """
-Create a holiday schedule for all US locations
+Create a holiday schedule for all US locations with all national holidays
 """
 
-from dotenv import load_dotenv
+import logging
 import os
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from threading import Lock
+from typing import List
+
+from calendarific import CalendarifiyApi, Holiday
+from dotenv import load_dotenv
 from webex_simple_api import WebexSimpleApi
 from webex_simple_api.locations import Location
 from webex_simple_api.telephony.schedules import ScheduleType, Event, Schedule
-from examples.calendarific import CalendarifiyApi, Holiday
-from datetime import date
-from concurrent.futures import ThreadPoolExecutor
-from typing import List
-from collections import defaultdict
-from threading import Lock
-
-import logging
 
 log = logging.getLogger(__name__)
 
