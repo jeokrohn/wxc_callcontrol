@@ -11,10 +11,12 @@ from threading import Semaphore
 from typing import List, Union, Tuple, Type, Optional
 from urllib.parse import parse_qsl
 
+
 import backoff
-from pydantic import BaseModel, ValidationError
-from pydantic import Field
+from pydantic import BaseModel, ValidationError, Field
 from requests import HTTPError, Response, Session
+from requests.adapters import HTTPAdapter
+
 
 from tokens import Tokens
 from .base import ApiModel
@@ -194,6 +196,7 @@ def _giveup_429(e: RestError) -> bool:
 
 StrOrDict = Union[str, dict]
 
+
 class RestSession(Session):
     BASE = 'https://webexapis.com/v1'
     """
@@ -207,6 +210,8 @@ class RestSession(Session):
 
     def __init__(self, *, tokens: Tokens, concurrent_requests: int):
         super().__init__()
+        self.mount('http://', HTTPAdapter(pool_maxsize=concurrent_requests))
+        self.mount('https://', HTTPAdapter(pool_maxsize=concurrent_requests))
         self._tokens = tokens
         self._sem = Semaphore(concurrent_requests)
 

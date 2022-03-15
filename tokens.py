@@ -17,10 +17,10 @@ class Tokens(BaseModel):
     access_token: str  #: access token
     expires_in: Optional[int]  #: remaining lifetime at time of token creation
     expires_at: Optional[datetime.datetime]  #: expiration, calculated at time of token creation
-    refresh_token: str  #: refresh token
+    refresh_token: Optional[str]  #: refresh token
     refresh_token_expires_in: Optional[int]   # remaining lifetime of refresh token at time of token creation
     refresh_token_expires_at: Optional[datetime.datetime]   #: expiration, calculated at time of token creation
-    token_type: Literal['Bearer']
+    token_type: Optional[Literal['Bearer']]
 
     def json(self, *args, **kwargs):
         """

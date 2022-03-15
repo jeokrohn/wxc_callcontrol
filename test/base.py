@@ -37,7 +37,7 @@ def gather(mapping: Iterable[Any], return_exceptions: bool = False) -> Generator
     """
     Gather results from a threading.map() call;  similar to asyncio.gather
     :param mapping: result of a threading.map() call
-    :type fs: List[Future]
+    :type mapping: Iterable[Any]
     :param return_exceptions: True: return exceptions; False: exceptions are raised
     :return: List of results
     """
@@ -209,7 +209,7 @@ def get_tokens() -> Optional[Tokens]:
 
 
 class TestCaseWithTokens(TestCase):
-    api: WebexSimpleApi
+    api: Optional[WebexSimpleApi]
     """
     A test case that required access tokens to run
     """

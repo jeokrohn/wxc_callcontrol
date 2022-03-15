@@ -539,8 +539,9 @@ class ScheduleAPI(ApiChild, base='telephony/config/locations'):
         return data['id']
 
     def event_delete(self, *, location_id: str, schedule_type: ScheduleTypeOrStr, schedule_id: str,
-                     event_id: str = None, org_id: str = None):
+                     event_id: str, org_id: str = None):
         """
+        # TODO: update documentation
         :param location_id: Location from which to delete a schedule.
         :type location_id: str
         :param schedule_type: Type of the schedule.

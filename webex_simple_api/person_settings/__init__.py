@@ -7,6 +7,7 @@ from .call_intercept import *
 from .call_recording import *
 from .caller_id import *
 from .forwarding import *
+from .dnd import *
 from ..api_child import ApiChild
 from ..rest import RestSession
 
@@ -23,3 +24,5 @@ class PersonSettingsApi(ApiChild, base='people'):
         self.call_intercept = CallInterceptApi(session)
         self.forwarding = ForwardingApi(session)
         self.barge = BargeApi(session)
+        self.dnd = DndApi(session)
+        # TODO: voicemail settings
