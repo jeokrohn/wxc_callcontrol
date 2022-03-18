@@ -7,7 +7,7 @@ WXC_CC_INTEGRATION_CLIENT_ID=
 # client secret of integration
 WXC_CC_INTEGRATION_CLIENT_SECRET=
 
-# scopes to request
+# scopes to request. Use these scopes when creating the integration at developer.webex.com
 WXC_CC_INTEGRATION_CLIENT_SCOPES="spark:calls_write spark:kms spark:calls_read spark-admin:telephony_config_read spark:people_read"
 
 # bot email address

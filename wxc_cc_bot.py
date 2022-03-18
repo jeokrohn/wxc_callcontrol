@@ -230,7 +230,7 @@ class CallControlBot(TeamsBot):
 
     def monitor_callback(self, message: Message):
         """
-        /monitor commamd
+        /monitor command
 
         :param message:
         :type message: Message
@@ -262,7 +262,8 @@ class CallControlBot(TeamsBot):
                                    target_url=self.call_event_url(user_id=message.personId),
                                    resource='telephony_calls',
                                    event='all')
-        return ''
+                return 'Monitor on: listening for telephony_calls events'
+        return 'Monitoring off'
 
     def dial_callback(self, message: Message):
         """
