@@ -7,7 +7,7 @@ import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
 from io import StringIO, TextIOBase
-from typing import Optional, Dict
+from typing import Optional
 
 import pydantic
 import pytz
@@ -18,9 +18,9 @@ from flask import Flask, request as flask_request
 from pydantic import BaseModel, Field
 from webexteamssdk import WebexTeamsAPI
 
-from integration import Integration
-from tokens import Tokens
-from webex_simple_api import WebexSimpleApi
+from wxc_sdk.integration import Integration
+from wxc_sdk.tokens import Tokens
+from wxc_sdk import WebexSimpleApi
 
 log = logging.getLogger(__name__)
 
@@ -426,8 +426,8 @@ class YAMLTokenManager(TokenManager):
     def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
-        self._user_context: Dict[str, UserContext] = dict()
-        self._flows: Dict[str, str] = dict()
+        self._user_context: dict[str, UserContext] = dict()
+        self._flows: dict[str, str] = dict()
         try:
             with open(self.yml_path, 'r') as file:
                 data = yaml.safe_load(file)

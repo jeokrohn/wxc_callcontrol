@@ -19,11 +19,11 @@ from webexteamsbot import TeamsBot
 from webexteamssdk import Message
 
 import ngrokhelper
-from integration import Integration
+from wxc_sdk.integration import Integration
 from user_context import TokenManager, RedisTokenManager, YAMLTokenManager
-from webex_simple_api import WebexSimpleApi
-from webex_simple_api.telephony.calls import TelephonyEvent
-from webex_simple_api.webhook import WebHookResource
+from wxc_sdk import WebexSimpleApi
+from wxc_sdk.telephony.calls import TelephonyEvent
+from wxc_sdk.webhook import WebHookResource
 
 log = logging.getLogger(__name__)
 
