@@ -37,7 +37,6 @@ def catch_exception(f):
     """
     Decorator to catch and log exceptions which led to termination of a thread
 
-    :meta private:
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
