@@ -1,0 +1,10 @@
+python-dotenv
+flask
+webexteamsbot
+PyYAML
+requests
+pytz
+webexteamssdk
+gunicorn
+redis
+wxc-sdk
