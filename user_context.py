@@ -44,7 +44,9 @@ class UserContext(BaseModel):
     """
     User context. For each user we need to keep track of the tokens obtained for that user
     """
+    #: user id
     user_id: str
+    #: tokens for the user: :class:`wxc_sdk.tokens.Tokens`
     tokens: Tokens
 
 
@@ -57,7 +59,13 @@ class TokenManager(ABC):
         * providing access to user contexts
     """
 
-    def __init__(self, bot_token: str, integration: 'Integration', **kwargs):
+    def __init__(self, bot_token: str, integration: Integration, **kwargs):
+        """
+
+        :param bot_token:  bot Token
+        :param integration: :class:`wxc_sdk.integration.Integration`
+        :param kwargs:
+        """
         self.integration = integration
         self.bot_token = bot_token
 
@@ -151,7 +159,7 @@ class TokenManager(ABC):
         try to refresh the tokens
 
         :param tokens: tokens to refresh
-        :type tokens: Tokens
+        :type tokens: :class:`wxc_sdk.tokens.Tokens`
         :return: True -> tokens got updated
         """
         return self.integration.validate_tokens(tokens=tokens,min_lifetime_seconds=MIN_TOKEN_LIFETIME_SECONDS)
@@ -209,14 +217,14 @@ class RedisTokenManager(TokenManager):
         #: :class:`datetime.datetime` the flow was created at
         created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
 
-    def __init__(self, bot_token: str, integration: 'Integration', redis_host: str = None, redis_url: str = None):
+    def __init__(self, bot_token: str, integration: Integration, redis_host: str = None, redis_url: str = None):
         """
         set up Redis token Manager
 
         :param bot_token: bot access token. Required to be able to send responses to the user
         :type bot_token: str
         :param integration: OAuth integration. Used to call the respective endpoints to obtain/refresh tokens
-        :type integration:  Integration to use to obtain/refresh tokens.
+        :type integration:  :class:wxc_sdk.integration.Integration
         :param redis_host: Redis host, Redis host takes precedence over Redis URL
         :type redis_host: str
         :param redis_url: Redis URL, Redis host takes precedence over Redis URL
@@ -396,8 +404,8 @@ class RedisTokenManager(TokenManager):
 
         :param user_id: user id of user to store context for
         :type user_id: str
-        :param user_context: contxt to store; if None then clear context for this user
-        :type user_context: UserContext
+        :param user_context: context to store; if None then clear context for this user
+        :type user_context: :class:`UserContext`
         """
         redis_key = self.user_key(user_id=user_id)
         if user_context is None:
@@ -417,7 +425,7 @@ class RedisTokenManager(TokenManager):
         :param user_id:
         :type user_id: str
         :return:
-        :rtype: UserContext
+        :rtype: :class:`UserContext`
         """
         redis_key = self.user_key(user_id=user_id)
         log.debug(f'get_user_context: get({redis_key})')
@@ -462,7 +470,16 @@ class YAMLTokenManager(TokenManager):
     only works if there is a single worker servicing the requests.
     """
 
-    def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
+    def __init__(self, bot_token: str, integration: Integration, yml_base: str):
+        """
+
+        :param bot_token: Bot token
+        :type bot_token: str
+        :param integration: Integration to use to obtain tokens
+        :type integration: :class:`wxc_sdk.integration.Integration`
+        :param yml_base: base name (no extension) for YAML file to use to persist state
+        :type yml_base: str
+        """
         super().__init__(bot_token=bot_token, integration=integration)
         self.yml_path = os.path.join(os.getcwd(), f'{yml_base}.yml')
         self._user_context: dict[str, UserContext] = dict()
@@ -536,7 +553,7 @@ class YAMLTokenManager(TokenManager):
         :param user_id: user id
         :type user_id: str
         :param user_context: user context; if None then clear the user context
-        :type user_context: UserContext
+        :type user_context: :class:`UserContext`
         """
         if user_context is None:
             log.debug(f'set_user_context: remove {user_id}')
@@ -553,7 +570,9 @@ class YAMLTokenManager(TokenManager):
         Get user context for given user_id
 
         :param user_id:
+        :type user_id: str
         :return:
+        :rtype: :class:`UserContext`
         """
         context = self._user_context.get(user_id)
         return context
