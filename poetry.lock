@@ -259,7 +259,7 @@ cli = ["click (>=5.0)"]
 
 [[package]]
 name = "pytz"
-version = "2021.3"
+version = "2022.1"
 description = "World timezone definitions, modern and historical"
 category = "main"
 optional = false
@@ -512,7 +512,7 @@ python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,>=2.7"
 
 [[package]]
 name = "wxc-sdk"
-version = "0.2.0"
+version = "0.3.0"
 description = "SDK for Webex APIs with special focus on Webex Calling specific endpoints"
 category = "main"
 optional = false
@@ -521,7 +521,7 @@ python-versions = ">=3.9,<4.0"
 [package.dependencies]
 backoff = ">=1.11.1,<2.0.0"
 pydantic = ">=1.9.0,<2.0.0"
-pytz = ">=2021.3,<2022.0"
+pytz = "*"
 requests = ">=2.27.1,<3.0.0"
 requests-toolbelt = ">=0.9.1,<0.10.0"
 
@@ -540,7 +540,7 @@ testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytest-
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "cecbb051883d852da50a936a027c0feb0e3e229de58509967ea9a90703ceb207"
+content-hash = "ae72608832f0ea36bec715b0894bc36fe3a9b71f849dd39d39c82d8ad5d4ff47"
 
 [metadata.files]
 alabaster = [
@@ -710,8 +710,8 @@ python-dotenv = [
     {file = "python_dotenv-0.19.2-py2.py3-none-any.whl", hash = "sha256:32b2bdc1873fd3a3c346da1c6db83d0053c3c62f28f1f38516070c4c8971b1d3"},
 ]
 pytz = [
-    {file = "pytz-2021.3-py2.py3-none-any.whl", hash = "sha256:3672058bc3453457b622aab7a1c3bfd5ab0bdae451512f6cf25f64ed37f5b87c"},
-    {file = "pytz-2021.3.tar.gz", hash = "sha256:acad2d8b20a1af07d4e4c9d2e9285c5ed9104354062f275f3fcd88dcef4f1326"},
+    {file = "pytz-2022.1-py2.py3-none-any.whl", hash = "sha256:e68985985296d9a66a881eb3193b0906246245294a881e7c8afe623866ac6a5c"},
+    {file = "pytz-2022.1.tar.gz", hash = "sha256:1e760e2fe6a8163bc0b3d9a19c4f84342afa0a2affebfaa84b01b978a02ecaa7"},
 ]
 pyyaml = [
     {file = "PyYAML-6.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:d4db7c7aef085872ef65a8fd7d6d09a14ae91f691dec3e87ee5ee0539d516f53"},
@@ -883,8 +883,8 @@ wrapt = [
     {file = "wrapt-1.14.0.tar.gz", hash = "sha256:8323a43bd9c91f62bb7d4be74cc9ff10090e7ef820e27bfe8815c57e68261311"},
 ]
 wxc-sdk = [
-    {file = "wxc_sdk-0.2.0-py3-none-any.whl", hash = "sha256:2256b9bd53e4efc974a3ff778c18347df2eae30a39abcdd0fd767a0cfa0cc8a0"},
-    {file = "wxc_sdk-0.2.0.tar.gz", hash = "sha256:dd196c6e2d46ee2fd6ab3efb208d063a464ad8fc6810da8da7023f2a11f6b966"},
+    {file = "wxc_sdk-0.3.0-py3-none-any.whl", hash = "sha256:265b8114b8341ae43e72bf04142bb1c0c077b94b56b8643fbc9ed94ea1bb9d05"},
+    {file = "wxc_sdk-0.3.0.tar.gz", hash = "sha256:fb79568fdf1e7b964c27d1682fa0ebd2e0b56618f53fdfe292756c88ad9be622"},
 ]
 zipp = [
     {file = "zipp-3.7.0-py3-none-any.whl", hash = "sha256:b47250dd24f92b7dd6a0a8fc5244da14608f3ca90a5efcd37a3b1642fac9a375"},
