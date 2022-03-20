@@ -1,3 +1,13 @@
+"""
+Management of user contexts for the bot.
+User contexts are either stored in Redis or in a local file.
+
+* :class:`TokenManager`: abstract base class for token managers
+* :class:`YAMLTokenManager`: token manager storing tokens for users in local YAML file
+* :class:`RedisTokenManager`: token manager storing tokens and OAuth flow state in  Redis
+
+------------------
+"""
 import datetime
 import json
 import logging
@@ -25,6 +35,9 @@ from wxc_sdk import WebexSimpleApi
 log = logging.getLogger(__name__)
 
 __all__ = ['UserContext', 'TokenManager', 'YAMLTokenManager', 'RedisTokenManager']
+
+# minimal token lifetime at which we consider refreshing tokens
+MIN_TOKEN_LIFETIME_SECONDS = 120
 
 
 class UserContext(BaseModel):
@@ -119,7 +132,7 @@ class TokenManager(ABC):
 
     def redirect(self):
         """
-        view function for GET on /redirect
+        view function for GET on /redirect at end of authorization flow
 
         Get code and state (flow id) from URL and set event on the registered flow
         :meta private:
@@ -141,21 +154,30 @@ class TokenManager(ABC):
         :type tokens: Tokens
         :return: True -> tokens got updated
         """
-        return self.integration.validate_tokens(tokens)
+        return self.integration.validate_tokens(tokens=tokens,min_lifetime_seconds=MIN_TOKEN_LIFETIME_SECONDS)
 
 
 class RedisTokenManager(TokenManager):
     """
     Token Maager using Redis as backend
     """
+    #: Redis key for set of active flow ids
     FLOW_SET = 'flows'
+
+    #: Redis key for datetime of latest flow maintenance. This is used in :meth:`flow_maintenance_needed` to
+    #: determine whether flow maintenance is needed
     FLOW_MAINTENANCE = 'flow-maintenance'
+
+    #: prefix for Redis keys to store :class:`UserContext` for users. Full key is in the form
+    #: of '{USER_KEY_PREFIX}-{user_id}'
     USER_KEY_PREFIX = 'user'
+
+    #: Redis key for set of users IDs we have :class:`UserContext` for in Redis
     USER_SET = 'users'
 
     def flow_key(self, *, flow_id: str) -> str:
         """
-        Redis key for a flow
+        Redis key for a flow. Something like 'flows-{flow_id}'
 
         :param flow_id: OAuth flow id
         :type flow_id: str
@@ -169,7 +191,7 @@ class RedisTokenManager(TokenManager):
         """
         A Redis key for a given user ID
 
-        :param user_id: user id to create a Redis key for
+        :param user_id: user id to create a Redis key for. Something like 'user-{user_id}'
         :type user_id: str
         :return: Redis key
         :rtype: str
@@ -182,17 +204,19 @@ class RedisTokenManager(TokenManager):
         keep track of a pending OAuth flow. For each flow we keep track of the creation time. This time is used to
         garbage collect old flows if needed
         """
+        #: user id the flow was created for
         user_id: str
+        #: :class:`datetime.datetime` the flow was created at
         created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.utcnow().replace(tzinfo=pytz.UTC))
 
     def __init__(self, bot_token: str, integration: 'Integration', redis_host: str = None, redis_url: str = None):
         """
-        set up token Manager
+        set up Redis token Manager
 
         :param bot_token: bot access token. Required to be able to send responses to the user
         :type bot_token: str
         :param integration: OAuth integration. Used to call the respective endpoints to obtain/refresh tokens
-        :type integration:  Integration
+        :type integration:  Integration to use to obtain/refresh tokens.
         :param redis_host: Redis host, Redis host takes precedence over Redis URL
         :type redis_host: str
         :param redis_url: Redis URL, Redis host takes precedence over Redis URL
@@ -224,6 +248,7 @@ class RedisTokenManager(TokenManager):
     def flow_maintenance_needed(self, *, force: bool = False) -> bool:
         """
         Determine whether flow maintenance is needed; only once every 15 minutes
+
         :return:
         """
         try:
@@ -241,12 +266,13 @@ class RedisTokenManager(TokenManager):
 
     def flow_maintenance(self, *, force: bool = False, output: TextIOBase = None):
         """
-        Garbage collection on existing flows
+        Garbage collection on existing flows if needed.
 
         :return:
         """
         output = output or StringIO()
-        if not self.flow_maintenance_needed(force=force) and not force:
+        # Check if flow maintenance is required.
+        if not self.flow_maintenance_needed(force=force):
             return
         log.debug('starting flow maintenance')
         now = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
@@ -269,7 +295,7 @@ class RedisTokenManager(TokenManager):
 
     def _get_flow_state(self, *, flow_key: str) -> Optional[FlowState]:
         """
-        Get parsed flow state from redis
+        Get parsed flow state from Redis
 
         :param flow_key:
         :type flow_key: str
@@ -279,6 +305,7 @@ class RedisTokenManager(TokenManager):
         if not flow_state_str:
             return None
         try:
+            # Redis stores JSON representation of :class:`FlowState`. Try to deserialize.
             flow_state = RedisTokenManager.FlowState.parse_obj(json.loads(flow_state_str))
         except (json.JSONDecodeError, pydantic.PydanticTypeError, pydantic.ValidationError) as e:
             log.warning(f'failed to parse state for flow key {flow_key}: {e}')
@@ -291,13 +318,21 @@ class RedisTokenManager(TokenManager):
 
         :param user_id: id of user to start the flow for
         :type user_id: str
-        :return: flow id
+        :return: flow id, the flow id is used as state parameter in OAuth flow and allows to identify the flow when
+            acting on the POST at the end of the OAuth flow
         """
         self.flow_maintenance()
+        # random flow id for the OAuth flow
         flow_id = str(uuid.uuid4())
+
+        # determine the Redis flow key based on the flow id.
         flow_key = self.flow_key(flow_id=flow_id)
+
+        # initialize state for new flow
         flow_state = RedisTokenManager.FlowState(user_id=user_id).json()
         log.debug(f'start_flow: set({flow_key}, {flow_state})')
+
+        # and store it in Redis
         self.redis.set(flow_key, flow_state)
         self.redis.sadd(self.FLOW_SET, flow_key)
         return flow_id
@@ -313,6 +348,7 @@ class RedisTokenManager(TokenManager):
         :return: text for HTTP response
         :rtype: str
         """
+        # determine Redis flow key for flow id and get the flow state from Redis
         flow_key = self.flow_key(flow_id=flow_id)
         flow_state = self._get_flow_state(flow_key=flow_key)
         if not flow_state:
@@ -329,11 +365,12 @@ class RedisTokenManager(TokenManager):
         except requests.HTTPError as e:
             log.error(f'process_redirect({flow_id}, {code}): failed to get tokens, {e}')
             return f'failed to get tokens'
-        tokens.set_expiration()
 
         # use the new tokens to get identity of authenticated user
         with WebexSimpleApi(tokens=tokens) as api:
             me = api.people.me()
+
+        # we expect the authenticated user to be identical to the user who initiated the auth flow
         if me.person_id != flow_state.user_id:
             log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.emails[0]}')
             api = WebexTeamsAPI(access_token=self.bot_token)
@@ -407,7 +444,8 @@ class RedisTokenManager(TokenManager):
             if not user_context.tokens.access_token:
                 log.error(f'No access token for {user_id}')
 
-        if user_context.tokens.needs_refresh:
+        if user_context.tokens.remaining < MIN_TOKEN_LIFETIME_SECONDS:
+            # consider refreshing tokens as soon as the remaining lifetime is less than 2 minutes
             if user_context.tokens.remaining < 0 or not user_context.tokens.access_token:
                 # need immediate refresh
                 refresh()
@@ -420,7 +458,8 @@ class RedisTokenManager(TokenManager):
 
 class YAMLTokenManager(TokenManager):
     """
-    A TokenManager using a local YAML file to store user contexts
+    A TokenManager using a local YAML file to store user contexts. Flow state is stored within the instance. This
+    only works if there is a single worker servicing the requests.
     """
 
     def __init__(self, bot_token: str, integration: 'Integration', yml_base: str):
@@ -471,12 +510,13 @@ class YAMLTokenManager(TokenManager):
         with WebexSimpleApi(tokens=tokens) as api:
             me = api.people.me()
         if me.person_id != user_id:
-            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {me.user_name}')
+            authenticated_user = f'{me.display_name} ({me.emails[0]})'
+            log.warning(f'process_redirect({flow_id}, {code}): tokens for wrong user: {authenticated_user}')
             api = WebexTeamsAPI(access_token=self.bot_token)
             api.messages.create(toPersonId=user_id,
-                                text=f'tokens for wrong user: {me.user_name}')
+                                text=f'tokens for wrong user: {authenticated_user}')
 
-            return f'tokens for wrong user: {me.user_name}'
+            return f'tokens for wrong user: {authenticated_user}'
         # store user context (tokens) in redis
         user_context = UserContext(user_id=user_id, tokens=tokens)
         log.debug(f'process_redirect({flow_id}, {code}): store context')

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 A simple bot demonstrating some of the capabilities of the Webex Calling call control APIs
+
+The "magic" happens in :class:`CallControlBot`
+
+---------------------
 """
 import json
 import logging
@@ -17,19 +21,20 @@ from dotenv import load_dotenv
 from flask import request as flask_request
 from webexteamsbot import TeamsBot
 from webexteamssdk import Message
+from wxc_sdk import WebexSimpleApi
+from wxc_sdk.integration import Integration
+from wxc_sdk.telephony.calls import TelephonyEvent
+from wxc_sdk.webhook import WebHookResource, WebHookEvent
+from wxc_sdk.telephony.calls import CallState
 
 import ngrokhelper
-from wxc_sdk.integration import Integration
 from user_context import TokenManager, RedisTokenManager, YAMLTokenManager
-from wxc_sdk import WebexSimpleApi
-from wxc_sdk.telephony.calls import TelephonyEvent
-from wxc_sdk.webhook import WebHookResource
 
 log = logging.getLogger(__name__)
 
 load_dotenv()
 
-# local port the Flask server for webhook notifications is runnjing on
+# local port the Flask server for webhook notifications is running on
 LOCAL_BOT_PORT = 6001
 
 
@@ -60,19 +65,77 @@ class CallControlBot(TeamsBot):
 
     def __init__(self,
                  *,
-                 teams_bot_name,
-                 teams_bot_token,
-                 teams_bot_email,
-                 teams_bot_url,
-                 client_id,
-                 client_secret,
-                 client_scopes,
-                 debug=False, **kwargs):
+                 teams_bot_name: str,
+                 teams_bot_token: str,
+                 teams_bot_email: str ,
+                 teams_bot_url: str,
+                 client_id: str,
+                 client_secret: str,
+                 client_scopes: str,
+                 client_redirect_url: str,
+                 debug=False):
+        """
+        :param teams_bot_name: Friendly name for the Bot (webhook name). Bot parameters are obtained from
+            https://developer.webex.com/my-apps/wxcc-bot when creating the bot
+        :param teams_bot_token: Teams Auth Token for Bot Account
+        :param teams_bot_email: Teams Bot Email Address
+        :param teams_bot_url: WebHook URL for this Bot
+
+        The teams_bot_* parameters are used to initialize the :class:`webexteamsbot.TeamsBot` base class.
+
+        :param client_id: client ID of the integration the Bot uses to obtain tokens to act on behalf of a user.
+            Integration parameters are obtained from https://developer.webex.com/my-apps/wxcc-bot when creating the
+            integration.
+        :param client_secret: client secret of the integration the Bot uses to obtain tokens to act on behalf of a user
+        :param client_scopes: scopes of the integration the Bot uses to obtain tokens to act on behalf of a user
+        :param client_redirect_url: redirect URL of the integration the Bot uses to obtain tokens to act on
+            behalf of a user
+        :param debug: debug mode
+
+        During initalization some bot commands are registered using the :meth:`webexteamsbot.add_command` method.
+
+        ========    =============================   ===========
+        Command     Handler                         Description
+        ========    =============================   ===========
+        /auth       :meth:`auth_callback`           Authenticate current user if needed or print authentication state.
+        /monitor    :meth:`monitor_callback`        Enable or disable monitoring von ``telephony_call`` events for curent
+                                                    user. Events are echoed to the chat.
+        /dial       :meth:`dial_callback`           Dial a destination for the current user. Uses
+                                                    :meth:`wxc_sdk.telephony.calls.CallsApi.dial`
+        /answer     :meth:`answer_callback`         Answer an incoming call for the current user. Uses
+                                                    :meth:`wxc_sdk.telephony.calls.CallsApi.list_calls` and
+                                                    :meth:`wxc_sdk.telephony.calls.CallsApi.answer`
+        /hangup     :meth:`hangup_callback`         Hang up an active call. Uses
+                                                    :meth:`wxc_sdk.telephony.calls.CallsApi.hangup`
+        /history    :meth:`call_history_callback`   Show call history for current user. Uses
+                                                    :meth:`wxc_sdk.telephony.calls.CallsApi.call_history`
+        /redis      :meth:`redis_callback`          Interact with Redis data store. This command is only available if the
+                                                    Bot is using the Redis integration via
+                                                    a :class:`user_context.RedisTokenManager` token manager.
+        ========    =============================   ===========
+
+        The bot needs to persist state (access and refresh tokens) for each user so that users don't need to
+        reauthenticate every time the bot has been restarted. This per user state is stored in
+        :class:`user_context.UserContext` objects which are managed by a :class:`user_context.TokenManager`. During
+        initialization the bot creates either a :class:`user_context.YAMLTokenManager` (persist state in local yaml
+        file) or a
+        :class:`user_context.RedisTokenManager` (persist user state in Redis) for token management and handling of
+        OAuth authentication flows. A
+        :class:`user_context.RedisTokenManager` is only used if the bot is running in an environment with a running
+        Redis server. This is determined by checking the ``REDIS_HOST``, ``REDIS_TLS_URL``, and ``REDIS_URL``
+        environment variables.
+
+        The ``/redirect`` endpoint under the bot base url (for example http://localhost:6001/redirect) is
+        registered
+        with the :class:`flask.Flask` base class of :class:`CallControlBot`. This endpoint is used as redirect URL
+        for the OAuth authorization flows to obtain access tokens for the bot users.
+        """
+        # set up base class: :class:`webexteamsbot.TeamsBot`
         super().__init__(teams_bot_name=teams_bot_name,
                          teams_bot_token=teams_bot_token,
                          teams_bot_email=teams_bot_email,
                          teams_bot_url=teams_bot_url,
-                         debug=debug, **kwargs)
+                         debug=debug)
         # our commands
         self.add_command('/auth', 'authenticate user: /auth [clear|force|maintenance]', self.auth_callback)
         self.add_command('/monitor', 'turn call event monitoring on or off', self.monitor_callback)
@@ -81,7 +144,8 @@ class CallControlBot(TeamsBot):
         self.add_command('/hangup', 'hang up alerting call', self.hangup_callback)
         self.add_command('/history', 'get call history', self.call_history_callback)
 
-        self._integration = Integration(client_id=client_id, client_secret=client_secret, scopes=client_scopes)
+        self._integration = Integration(client_id=client_id, client_secret=client_secret, scopes=client_scopes,
+                                        redirect_url=client_redirect_url)
         redis_host = os.getenv('REDIS_HOST')
         redis_url = os.getenv('REDIS_TLS_URL') or os.getenv('REDIS_URL')
         if redis_host or redis_url:
@@ -100,13 +164,12 @@ class CallControlBot(TeamsBot):
 
     def call_event_url(self, user_id: str) -> str:
         """
-        User specific call event URL
+        User specific call event URL: ``/callevent/{user_id}``
 
-        :param user_id:
+        :param user_id: user ID to create a ``telephony_call`` webhook events URL for.
         :type user_id: str
         :return: generated URL
         :rtype: str
-        :meta private:
         """
         return f'{self.teams_bot_url}/callevent/{user_id}'
 
@@ -148,26 +211,43 @@ class CallControlBot(TeamsBot):
 
     def auth_callback(self, message: Message) -> str:
         """
-        handler for /auth command
+        handler for /auth command.
 
-        :param message:
-        :type message: Message
+        The handler supports:
+            *   ``/auth``: check if the user has been authenticated. Get authorization URL if needed, else display
+                existing access token validity
+            *   ``/auth clear``: clear existing user context for current user
+            *   ``/auth force``: force new authentication of current user even if the bot already has tokens for the
+                current user.
+            *   ``/auth maintenance``: force :meth:`user_context.RedisTokenManager.flow_maintenance`. This cleans up
+                all dangling OAuth
+                authorization flows: flows which have been initiated but never completed.
+
+                This command only makes sense if the bot is using a :class:`user_context.RedisTokenManager`.
+
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
         """
 
         @catch_exception
         def authenticate(user_id: str, user_email: str):
             """
-            Authenticate sender of /auth command
+            Actually handle /auth command in a thread to avoid lockup of the
+            web server
+            handling the Webhook messagee.
 
             :param user_id: user id
             :type user_id: str
             :param user_email: user email
             :type user_email: str
             """
+            # get user context from token manager
             user_context = self._token_manager.get_user_context(user_id=user_id)
+
             if len(line) == 2 and line[1] == 'clear':
+                # /auth clear: clear existing user context
                 if not user_context:
                     self.teams.messages.create(toPersonId=user_id,
                                                text=f'No user context for {user_email}')
@@ -176,28 +256,40 @@ class CallControlBot(TeamsBot):
                 self.teams.messages.create(toPersonId=user_id,
                                            text=f'Cleared user context for {user_email}')
                 return
+
             if len(line) == 2 and line[1] == 'maintenance':
+                # /auth maintenance: force authorization flow maintenance
                 # auth flow maintenance
                 if not isinstance(self._token_manager, RedisTokenManager):
                     self.teams.messages.create(toPersonId=user_id,
                                                text='/auth maintenance only makes sense when using Redis backend')
                     return
                 tm: RedisTokenManager = self._token_manager
+                # catch output of flow maintenance in string
                 output = StringIO()
                 tm.flow_maintenance(force=True, output=output)
+
+                # message to user with result of flow maintenance
                 self.teams.messages.create(toPersonId=user_id,
                                            text=output.getvalue())
                 return
 
             force_auth = len(line) == 2 and line[1] == 'force'
             if user_context:
+                # echo existing user context (token validity) back to user
                 self.teams.messages.create(toPersonId=user_id,
                                            text=f'User context for {user_email}: access token valid until '
                                                 f'{user_context.tokens.expires_at}')
                 if not force_auth:
+                    # done if the user doesn't want to force new authentication
                     return
             else:
+                # we don't have a user context
                 self.teams.messages.create(toPersonId=user_id, text=f'No user context for {user_email}')
+
+            # to initiate authentication we need a new flow id, then have to create an authorization URL, and finally
+            # share the authorization URL with the user so that the user can initiate the authorization flow using
+            # that link
 
             # register auth flow and get flow id
             flow_id = self._token_manager.start_flow(user_id=user_id)
@@ -209,6 +301,9 @@ class CallControlBot(TeamsBot):
             return
 
         def usage():
+            """
+            send usage message for /auth command to current user
+            """
             self.teams.messages.create(toPersonId=user_id,
                                        text="""usage:
 * /auth: initiate auth flow if needed
@@ -223,18 +318,26 @@ class CallControlBot(TeamsBot):
 
         if len(line) > 2 or len(line) == 2 and line[1] not in ['clear', 'force', 'maintenance']:
             usage()
-        # handle actual authentication in thread to prevent delaying the response to the POST on the Webhook URL
-        self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
+        else:
+            # handle actual authentication in thread to prevent delaying the response to the POST on the Webhook URL
+            self._thread_pool.submit(authenticate, user_id=user_id, user_email=user_email)
         return ''
 
     def monitor_callback(self, message: Message):
         """
-        /monitor command
+        handler for /monitor command
 
-        :param message:
-        :type message: Message
+        The handler supports:
+            * /montor on: turn ``telephony_calls`` event monitoring on
+            * /montor off: turn ``telephony_calls`` event monitoring off
+
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
+
+        To turn monitoring on a webhook for ``telephony_calls`` events is created for the current user. The URL for
+        the webhook (destination for the POST from Webex) is user specific and created using :meth:`call_event_url`.
         """
         line = message.text.split()
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
@@ -259,19 +362,19 @@ class CallControlBot(TeamsBot):
                 # create webhook for telephony event for the current user
                 api.webhook.create(name=str(uuid.uuid4()),
                                    target_url=self.call_event_url(user_id=message.personId),
-                                   resource='telephony_calls',
-                                   event='all')
+                                   resource=WebHookResource.telephony_calls,
+                                   event=WebHookEvent.all)
                 return 'Monitor on: listening for telephony_calls events'
         return 'Monitoring off'
 
     def dial_callback(self, message: Message):
         """
-        /dial command
+        handler for /dial command
 
-        :param message:
-        :type message: Message
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
         """
         line = message.text.split()
         if len(line) != 2:
@@ -287,12 +390,12 @@ class CallControlBot(TeamsBot):
 
     def answer_callback(self, message: Message):
         """
-        /answer command
+        handler for /answer command
 
-        :param message:
-        :type message: Message
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
         """
         line = message.text.split()
         if len(line) != 1:
@@ -303,12 +406,16 @@ class CallControlBot(TeamsBot):
 
         @catch_exception
         def answer_call(user_id: str):
+            """
+            Actually handle /answer call in thread context to prevent blocking
+            :param user_id:
+            """
             user_context = self._token_manager.get_user_context(user_id=message.personId)
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 # list calls
-                calls = api.telephony.calls.list_calls()
+                calls = list(api.telephony.calls.list_calls())
                 # find call in 'alerting'
-                alerting_call = next((c for c in calls if c.state == 'alerting'), None)
+                alerting_call = next((c for c in calls if c.state == CallState.alerting), None)
                 if alerting_call is None:
                     self._thread_pool.submit(self.teams.messages.create, toPersonId=user_id,
                                              text='No call in "alerting"')
@@ -321,19 +428,19 @@ class CallControlBot(TeamsBot):
                 self._thread_pool.submit(catch_exception(api.telephony.calls.answer), call_id=alerting_call.call_id)
             return
 
-        # answer_call(user_id=message.personId)
         # submit thread to actually answer the call
+        # answer_call(user_id=message.personId)
         self._thread_pool.submit(answer_call, user_id=message.personId)
         return ''
 
     def hangup_callback(self, message: Message):
         """
-        /hangup command
+        handler for /hangup command
 
-        :param message:
-        :type message: Message
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
         """
         line = message.text.split()
         if len(line) != 1:
@@ -368,12 +475,12 @@ class CallControlBot(TeamsBot):
 
     def redis_callback(self, message: Message):
         """
-        /redis command
+        handler for /redis command
 
-        :param message:
-        :type message: Message
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
         :return: response to user
-        :meta private:
+        :rtype: str
         """
 
         def usage():
@@ -466,7 +573,15 @@ class CallControlBot(TeamsBot):
         self._thread_pool.submit(process)
         return ''
 
-    def call_history_callback(self, message: Message):
+    def call_history_callback(self, message: Message)->str:
+        """
+        handler for /history command
+
+        :param message: The message from the user in the 1:1 space with the bot
+        :type message: :class:`webexteamssdk.Message`
+        :return: response to user
+        :rtype: str
+        """
         user_context = self._token_manager.get_user_context(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
@@ -488,18 +603,48 @@ class CallControlBot(TeamsBot):
         return ''
 
 
+# set up logging for the bot
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(process)d] %(threadName)s %(levelname)s %(name)s %('
                                                 'message)s')
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
 logging.getLogger('webexteamssdk.restsession').setLevel(logging.WARNING)
 
+# to disable logging of WXC SDK REST messages change the log level
+logging.getLogger('wxc_sdk.rest').setLevel(logging.DEBUG)
+
 
 def create_app() -> CallControlBot:
     """
-    Create a bot instance
+    Create a :class:`CallControlBot` instance.
 
-    :return: the Flask app object
+    :return: the bot instance; subclass of :class:`flask.Flask`
     :rtype: CallControlBot
+
+    All parameters to create the bot are read from environment variables:
+
+    ================================    ===========
+    Environment variable                Description
+    ================================    ===========
+    WXC_CC_BOT_EMAIL                    bot email
+    WXC_CC_BOT_ACCESS_TOKEN             bot access token
+    WXC_CC_BOT_NAME                     bot name
+    WXC_CC_INTEGRATION_CLIENT_ID        client id  for integration that is used to obtain tokens to act on behalf
+                                        of the user that is interacting with the bot.
+    WXC_CC_INTEGRATION_CLIENT_SECRET    client secret  for integration that is used to obtain tokens to act on behalf
+                                        of the user that is interacting with the bot.
+    WXC_CC_INTEGRATION_CLIENT_SCOPES    scopes for integration that is used to obtain tokens to act on behalf of the
+                                        user that is interacting with the bot. Spoce separated list of scopes.
+    ================================    ===========
+
+    The scripts reads ``.env`` from the current directory. This file can be used to set all these variables. A
+    template (``.env (sample)``) exists in the project directory:
+
+    .. literalinclude:: ../.env (sample)
+
+    :func:`create_app` is used in the ``Procfile`` when deploying to Heroku:
+
+    .. literalinclude:: ../Procfile
+
     """
 
     # determine public URL for Bot
@@ -510,7 +655,7 @@ def create_app() -> CallControlBot:
     else:
         log.debug(f'running on heroku as {heroku_name}')
         bot_url = f'https://{heroku_name}.herokuapp.com'
-    log.debug(f'Webhook URL: {bot_url}')
+    log.debug(f'Webhook base URL: {bot_url}')
 
     # Create a new bot
     bot_email = os.getenv('WXC_CC_BOT_EMAIL')
@@ -519,10 +664,12 @@ def create_app() -> CallControlBot:
     client_id = os.getenv('WXC_CC_INTEGRATION_CLIENT_ID')
     client_secret = os.getenv('WXC_CC_INTEGRATION_CLIENT_SECRET')
     client_scopes = os.getenv('WXC_CC_INTEGRATION_CLIENT_SCOPES')
+    client_redirect_url = f'{bot_url}/redirect'
 
     bot = CallControlBot(teams_bot_name=bot_app_name, teams_bot_token=teams_token,
                          teams_bot_url=bot_url, teams_bot_email=bot_email, debug=True,
-                         client_id=client_id, client_secret=client_secret, client_scopes=client_scopes)
+                         client_id=client_id, client_secret=client_secret, client_scopes=client_scopes,
+                         client_redirect_url=client_redirect_url)
     return bot
 
 

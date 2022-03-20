@@ -30,7 +30,26 @@ release = '0.1'
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ['sphinx.ext.autodoc']
+extensions = ['sphinx.ext.autodoc',
+              'sphinx_rtd_theme',
+              'sphinx.ext.viewcode',
+              'sphinx.ext.intersphinx']
+
+# intersphinx allows to reference other RTD projects
+# to view an object inventory:
+#   python -m sphinx.ext.intersphinx https://wxc-sdk.readthedocs.io/en/latest/objects.inv
+intersphinx_mapping = {
+    'wxc_sdk': ('https://wxc-sdk.readthedocs.io/en/latest/', None),
+    'webexteamssdk': ('https://webexteamssdk.readthedocs.io/en/latest', None),
+}
+
+# This value selects what content will be inserted into the main body of an autoclass directive.
+# Both the class’ and the __init__ method’s docstring are concatenated and inserted.
+autoclass_content = 'both'
+
+# This value selects if automatically documented members are sorted alphabetical (value 'alphabetical'), by member
+# type (value 'groupwise') or by source order (value 'bysource'). The default is alphabetical.
+autodoc_member_order = 'bysource'
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
