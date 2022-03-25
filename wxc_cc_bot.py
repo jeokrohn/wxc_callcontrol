@@ -166,6 +166,9 @@ class CallControlBot(TeamsBot):
         """
         User specific call event URL: ``/callevent/{user_id}``
 
+        This URL is used as target URL when creating a webhook for call events of a given user in
+        :meth:`monitor_callback`
+
         :param user_id: user ID to create a ``telephony_call`` webhook events URL for.
         :type user_id: str
         :return: generated URL
@@ -175,23 +178,24 @@ class CallControlBot(TeamsBot):
 
     def call_event(self, user_id: str):
         """
-        view function for posts to callevent endpoint
-        Handle webhook messages
+        This is the view function that is called by flask when a POST on the call event URL needs to be handled. This
+        endpoint is used as target URL when creating a webhook for call events of a given user.
+
+        The demo bot simply tries to deserialize the ``telephony_call`` event and then send a message to the user
+        containing the JSON representation of the ``telephone_call`` event.
 
         :param user_id: user id, passed as parameter in the request URL
         :type user_id: str
-        :return:
-        :meta private:
         """
 
         @catch_exception
         def thread_handle(user_id: str, json_data: str):
             """
-            Actually handle a call event, runs in separate thread
+            Actually handle a call event, runs in separate thread.
 
             :param user_id:
             :type user_id: str
-            :param json_data:
+            :param json_data: JSON data from the flask request.
             :type json_data: str
             """
             log.debug(f'webhook event: {json_data}')

@@ -1,4 +1,4 @@
-Playing with Webex Calling call control APIs
+Playing with Webex Calling Call Control APIs
 ============================================
 
 .. toctree::
