@@ -41,6 +41,7 @@ extensions = ['sphinx.ext.autodoc',
 intersphinx_mapping = {
     'wxc_sdk': ('https://wxc-sdk.readthedocs.io/en/latest/', None),
     'webexteamssdk': ('https://webexteamssdk.readthedocs.io/en/latest', None),
+    'flask': ('https://flask.palletsprojects.com/en/2.0.x/', None),
 }
 
 # This value selects what content will be inserted into the main body of an autoclass directive.

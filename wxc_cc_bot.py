@@ -128,7 +128,8 @@ class CallControlBot(TeamsBot):
         The ``/redirect`` endpoint under the bot base url (for example http://localhost:6001/redirect) is
         registered
         with the :class:`flask.Flask` base class of :class:`CallControlBot`. This endpoint is used as redirect URL
-        for the OAuth authorization flows to obtain access tokens for the bot users.
+        for the OAuth authorization flows to obtain access tokens for the bot users. The registration is done by
+        calling :meth:`user_context.TokenManager.register_redirect`.
         """
         # set up base class: :class:`webexteamsbot.TeamsBot`
         super().__init__(teams_bot_name=teams_bot_name,
@@ -178,7 +179,7 @@ class CallControlBot(TeamsBot):
 
     def call_event(self, user_id: str):
         """
-        This is the view function that is called by flask when a POST on the call event URL needs to be handled. This
+        This is the view function that is called by Flask when a POST on the call event URL needs to be handled. This
         endpoint is used as target URL when creating a webhook for call events of a given user.
 
         The demo bot simply tries to deserialize the ``telephony_call`` event and then send a message to the user
@@ -195,7 +196,7 @@ class CallControlBot(TeamsBot):
 
             :param user_id:
             :type user_id: str
-            :param json_data: JSON data from the flask request.
+            :param json_data: JSON data from the Flask request.
             :type json_data: str
             """
             log.debug(f'webhook event: {json_data}')
@@ -656,9 +657,11 @@ def create_app() -> CallControlBot:
     if heroku_name is None:
         log.debug('not running on Heroku. Using ngrok to obtain a public URL')
         bot_url = ngrokhelper.get_public_url(local_port=LOCAL_BOT_PORT)
+        client_redirect_url = 'http://localhost:6001/redirect'
     else:
         log.debug(f'running on heroku as {heroku_name}')
         bot_url = f'https://{heroku_name}.herokuapp.com'
+        client_redirect_url = f'{bot_url}/redirect'
     log.debug(f'Webhook base URL: {bot_url}')
 
     # Create a new bot
@@ -668,7 +671,6 @@ def create_app() -> CallControlBot:
     client_id = os.getenv('WXC_CC_INTEGRATION_CLIENT_ID')
     client_secret = os.getenv('WXC_CC_INTEGRATION_CLIENT_SECRET')
     client_scopes = os.getenv('WXC_CC_INTEGRATION_CLIENT_SCOPES')
-    client_redirect_url = f'{bot_url}/redirect'
 
     bot = CallControlBot(teams_bot_name=bot_app_name, teams_bot_token=teams_token,
                          teams_bot_url=bot_url, teams_bot_email=bot_email, debug=True,

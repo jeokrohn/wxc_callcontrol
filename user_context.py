@@ -130,25 +130,35 @@ class TokenManager(ABC):
 
     def register_redirect(self, *, flask: Flask):
         """
-        Register /redirect endpoint for OAuth flows
+        Register /redirect endpoint for OAuth flows.
+
+        :meth:`redirect` is registered as view handler with flask by calling :meth:`flask.Flask.add_url_rule`.
+        The view handler is called whenever a request on the /redirect endpoint needs to be handled.
 
         :param flask: Flask app to register the /redirect endpoint with
-        :type flask: Flask
+        :type flask: :class:`flask.Flask`
         """
         # register /redirect endpoint
         flask.add_url_rule(rule='/redirect', endpoint='redirect', view_func=self.redirect, methods=('GET',))
 
     def redirect(self):
         """
-        view function for GET on /redirect at end of authorization flow
+        view function for GET on /redirect at end of authorization flow.
 
         Get code and state (flow id) from URL and set event on the registered flow
-        :meta private:
+
+
+        The view function is called whenever a request on /redirect needs to be handled. Request details are available
+        in the global :attr:`flask.request` variable (imported as ``flask_request``).
+
+        Authorization code and flow id are contained in the query string of the request URL. The parsed arguments
+        of the query string can be
+        found in the :attr:`flask.Request.args` attribute of ``flask_request``.
+
         """
         # get code and flow id from URL
-        query = urllib.parse.parse_qs(flask_request.query_string.decode())
-        code = query.get('code', [None])[0]
-        flow_id = query.get('state', [None])[0]
+        code = flask_request.args.get('code')
+        flow_id = flask_request.args.get('state')
         log.debug(f'handle /redirect: code={code}, flow id={flow_id}')
 
         if not all((code, flow_id)):
