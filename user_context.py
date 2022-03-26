@@ -149,6 +149,7 @@ class TokenManager(ABC):
         query = urllib.parse.parse_qs(flask_request.query_string.decode())
         code = query.get('code', [None])[0]
         flow_id = query.get('state', [None])[0]
+        log.debug(f'handle /redirect: code={code}, flow id={flow_id}')
 
         if not all((code, flow_id)):
             return ''
