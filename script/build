@@ -26,6 +26,11 @@ for i in ${@}; do
         docs=true
         ;;
 
+        reqs)
+        all=
+        reqs=true
+        ;;
+
         *)
         echo "Unknown argument: $i"
         exit 1
@@ -42,4 +47,9 @@ if [ ${all} ] || [ ${docs} ]; then
     echo "==> Building the Docs"
     make -C docs clean
     make -C docs html
+fi
+
+if [ ${all} ] || [ ${reqs} ]; then
+    echo "==> Creating requirements.txt"
+    poetry export --without-hashes -o requirements.txt
 fi
