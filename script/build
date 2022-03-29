@@ -16,11 +16,6 @@ all=true
 # Process Script Arguments
 for i in ${@}; do
     case ${i} in
-        package)
-        all=
-        package=true
-        ;;
-
         docs)
         all=
         docs=true
