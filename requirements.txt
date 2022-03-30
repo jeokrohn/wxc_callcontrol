@@ -29,5 +29,5 @@ webexteamsbot==0.1.4.2
 webexteamssdk==1.6
 werkzeug==2.1.0; python_version >= "3.7"
 wrapt==1.14.0; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.5.0" and python_version >= "3.6"
-wxc-sdk==0.5.1; python_version >= "3.9" and python_version < "4.0"
+wxc-sdk==0.5.3; python_version >= "3.9" and python_version < "4.0"
 zipp==3.7.0; python_version < "3.10" and python_version >= "3.7"

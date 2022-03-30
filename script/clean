@@ -48,6 +48,7 @@ if [ -d "docs" ]; then
     echo "Cleaning the docs directories"
     make -C docs clean
     rm -rf docs/_build/*
+    rm -rf docs/_build/
 fi
 
 
