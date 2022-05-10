@@ -4,6 +4,8 @@ Running in Docker
 The distribution includes a ``docker-compose.yml`` file so that ``docker-compose up -d --build`` can be used to build
 or pull the required images and start all containers. The ``docker-compose.yml`` file defines three hosts:
 
+.. image:: png/docker.png
+
 * wxc_cc_bot: the actual bot.
 
 * ngrok: This container is used to get a temporary public URL that is then redirected to the wx_cc_bot container.

@@ -147,7 +147,6 @@ class TokenManager(ABC):
 
         Get code and state (flow id) from URL and set event on the registered flow
 
-
         The view function is called whenever a request on /redirect needs to be handled. Request details are available
         in the global :attr:`flask.request` variable (imported as ``flask_request``).
 
@@ -397,6 +396,7 @@ class RedisTokenManager(TokenManager):
                                 text=f'tokens for wrong user: {me.emails[0]}')
 
             return f'tokens for wrong user: {me.emails[0]}'
+
         # store user context (tokens) in redis
         user_context = UserContext(user_id=flow_state.user_id, tokens=tokens)
         log.debug(f'process_redirect({flow_id}, {code}): store context')

@@ -19,6 +19,7 @@ Documentation: https://wxc-callcontrol.readthedocs.io/en/latest/
 
     the_bot
     credentials
+    local
     docker
     wxc_cc_bot
     ngrokhelper

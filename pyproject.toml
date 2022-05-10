@@ -16,9 +16,9 @@ pytz = "^2022.1"
 webexteamssdk = "^1.6"
 gunicorn = "^20.1.0"
 redis = "^4.1.4"
-backoff = "^1.11.1"
+backoff = "*"
 pydantic = "^1.9.0"
-wxc-sdk = "^0.5.2"
+wxc-sdk = ">=1.4.1"
 
 [tool.poetry.dev-dependencies]
 Sphinx = "^4.4.0"
