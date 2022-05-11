@@ -54,7 +54,7 @@ When you plan to run the bot locally (either directly or in Docker) then you nee
 an URL the bot listens on locally. When hosting your bot on Heroku (or some other hosting platform) you need to make
 sure to also include a redirect URI pointing to that platform:
 
-.. image:: png/redirect_uris.png
+.. image:: docs/png/redirect_uris.png
     :width: 600
 
 Docker (docker-compose)
