@@ -24,7 +24,7 @@ from webexteamssdk import Message
 from wxc_sdk import WebexSimpleApi
 from wxc_sdk.integration import Integration
 from wxc_sdk.scopes import parse_scopes
-from wxc_sdk.telephony.calls import CallState
+from wxc_sdk.telephony.calls import CallState, Personality
 from wxc_sdk.telephony.calls import TelephonyEvent
 from wxc_sdk.webhook import WebHookResource, WebHookEvent
 
@@ -138,7 +138,7 @@ class CallControlBot(TeamsBot):
 
         .. code-block:: Python
 
-            user_context = self._token_manager.get_user_context(user_id=message.personId)
+            user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
             if user_context is None or not user_context.tokens.access_token:
                 return f'User {message.personEmail} not authenticated. Use /auth command first'
 
@@ -286,7 +286,7 @@ class CallControlBot(TeamsBot):
             :type user_email: str
             """
             # get user context from token manager
-            user_context = self._token_manager.get_user_context(user_id=user_id)
+            user_context = self._token_manager.get_user_context_and_refresh(user_id=user_id)
 
             if len(line) == 2 and line[1] == 'clear':
                 # /auth clear: clear existing user context
@@ -384,7 +384,7 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 2 or line[1].lower() not in ['on', 'off']:
             return 'usage: /monitor on|off'
-        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
@@ -421,7 +421,7 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 2:
             return 'Usage: /dial <dial string>'
-        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
         with WebexSimpleApi(tokens=user_context.tokens) as api:
@@ -442,7 +442,7 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 1:
             return 'Usage: /answer'
-        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
@@ -452,7 +452,7 @@ class CallControlBot(TeamsBot):
             Actually handle /answer call in thread context to prevent blocking
             :param user_id:
             """
-            user_context = self._token_manager.get_user_context(user_id=message.personId)
+            user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 # list calls
                 calls = list(api.telephony.calls.list_calls())
@@ -487,26 +487,32 @@ class CallControlBot(TeamsBot):
         line = message.text.split()
         if len(line) != 1:
             return 'Usage: /hangup'
-        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 
         @catch_exception
         def hangup_call(user_id: str):
-            user_context = self._token_manager.get_user_context(user_id=message.personId)
+            user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 # list calls
                 calls = api.telephony.calls.list_calls()
                 # find call in 'connected'
-                connected_call = next((c for c in calls if c.state == 'connected'), None)
+                connected_call = next((c for c in calls if c.state == CallState.connected), None)
                 if connected_call is None:
                     self._thread_pool.submit(self.teams.messages.create, toPersonId=user_id,
                                              text='No connected call')
                     return
-                # hang up that call
+                # determine whether "we" initiated the call
+                if connected_call.personality == Personality.originator:
+                    direction = 'to'
+                else:
+                    direction = 'from'
+                # notify user and hang up that call
+                # both actions are executed in a separate thread
                 self._thread_pool.submit(self.teams.messages.create,
                                          toPersonId=user_id,
-                                         text=f'hanging up call from {connected_call.remote_party.name}'
+                                         text=f'hanging up call {direction} {connected_call.remote_party.name}'
                                               f'({connected_call.remote_party.number})')
                 self._thread_pool.submit(catch_exception(api.telephony.calls.hangup), call_id=connected_call.call_id)
             return
@@ -624,7 +630,7 @@ class CallControlBot(TeamsBot):
         :return: response to user
         :rtype: str
         """
-        user_context = self._token_manager.get_user_context(user_id=message.personId)
+        user_context = self._token_manager.get_user_context_and_refresh(user_id=message.personId)
         if user_context is None or not user_context.tokens.access_token:
             return f'User {message.personEmail} not authenticated. Use /auth command first'
 

@@ -174,10 +174,46 @@ class TokenManager(ABC):
         """
         return self.integration.validate_tokens(tokens=tokens,min_lifetime_seconds=MIN_TOKEN_LIFETIME_SECONDS)
 
+    def get_user_context_and_refresh(self, *, user_id: str) -> Optional[UserContext]:
+        """
+        Get user context for given user_id and try to refresh the access token if needed
+
+        :param user_id: id of user to get context for
+        :type user_id: str
+        :return: user context
+        :rtype: UserContext
+        """
+        user_context = self.get_user_context(user_id=user_id)
+        if user_context is None:
+            return None
+
+        def refresh():
+            """
+            Refresh the access token in the user context.
+            """
+            log.debug(f'Token refresh for {user_id}')
+            refreshed = self.token_refresh(tokens=user_context.tokens)
+            if refreshed:
+                log.debug(f'got new tokens for {user_id}')
+                self.set_user_context(user_id=user_context.user_id, user_context=user_context)
+            if not user_context.tokens.access_token:
+                log.error(f'No access token for {user_id}')
+
+        if user_context.tokens.remaining < MIN_TOKEN_LIFETIME_SECONDS:
+            # consider refreshing tokens as soon as the remaining lifetime is less than 2 minutes
+            if user_context.tokens.remaining < 0 or not user_context.tokens.access_token:
+                # need immediate refresh
+                refresh()
+            else:
+                # good for now but we need new tokens "soon": schedule a task
+                log.debug(f'Initiate refresh of tokens for {user_id}')
+                threading.Thread(target=refresh).start()
+        return user_context
+
 
 class RedisTokenManager(TokenManager):
     """
-    Token Maager using Redis as backend
+    Token Manager using Redis as backend
     """
     #: Redis key for set of active flow ids
     FLOW_SET = 'flows'
@@ -450,28 +486,6 @@ class RedisTokenManager(TokenManager):
             log.warning(f'get_user_context({user_id}): failed to parse JSON, {e}')
             return None
 
-        def refresh():
-            """
-            Refresh the access token in the user context.
-
-            """
-            log.debug(f'Token refresh for {user_id}')
-            refreshed = self.token_refresh(tokens=user_context.tokens)
-            if refreshed:
-                log.debug(f'got new tokens for {user_id}')
-                self.set_user_context(user_id=user_context.user_id, user_context=user_context)
-            if not user_context.tokens.access_token:
-                log.error(f'No access token for {user_id}')
-
-        if user_context.tokens.remaining < MIN_TOKEN_LIFETIME_SECONDS:
-            # consider refreshing tokens as soon as the remaining lifetime is less than 2 minutes
-            if user_context.tokens.remaining < 0 or not user_context.tokens.access_token:
-                # need immediate refresh
-                refresh()
-            else:
-                # good for now but we need new tokens "soon": schedule a task
-                log.debug(f'Initiate refresh of tokens for {user_id}')
-                threading.Thread(target=refresh).start()
         return user_context
 
 
