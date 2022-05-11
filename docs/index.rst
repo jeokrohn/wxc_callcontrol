@@ -21,6 +21,7 @@ Documentation: https://wxc-callcontrol.readthedocs.io/en/latest/
     credentials
     local
     docker
+    heroku
     wxc_cc_bot
     ngrokhelper
     user_context
