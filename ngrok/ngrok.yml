@@ -1,2 +1,2 @@
 web_addr: 0.0.0.0:4040
-root_cas: trusted
+version: "2"
