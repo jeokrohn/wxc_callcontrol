@@ -26,7 +26,7 @@ from wxc_sdk.integration import Integration
 from wxc_sdk.scopes import parse_scopes
 from wxc_sdk.telephony.calls import CallState, Personality
 from wxc_sdk.telephony.calls import TelephonyEvent
-from wxc_sdk.webhook import WebHookResource, WebHookEvent
+from wxc_sdk.webhook import WebhookResource, WebhookEventType
 
 import ngrokhelper
 from user_context import TokenManager, RedisTokenManager, YAMLTokenManager
@@ -392,7 +392,7 @@ class CallControlBot(TeamsBot):
             webhooks = api.webhook.list()
             webhooks = [wh for wh in webhooks
                         if wh.app_id_uuid == self._integration.client_id and
-                        wh.resource == WebHookResource.telephony_calls and
+                        wh.resource == WebhookResource.telephony_calls and
                         wh.target_url.endswith(message.personId)]
             if webhooks:
                 # delete all of them
@@ -404,8 +404,8 @@ class CallControlBot(TeamsBot):
                 # create webhook for telephony event for the current user
                 api.webhook.create(name=str(uuid.uuid4()),
                                    target_url=self.call_event_url(user_id=message.personId),
-                                   resource=WebHookResource.telephony_calls,
-                                   event=WebHookEvent.all)
+                                   resource=WebhookResource.telephony_calls,
+                                   event=WebhookEventType.all)
                 return 'Monitor on: listening for telephony_calls events'
         return 'Monitoring off'
 
