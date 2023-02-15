@@ -643,7 +643,7 @@ class CallControlBot(TeamsBot):
             with WebexSimpleApi(tokens=user_context.tokens) as api:
                 history = list(api.telephony.calls.call_history())
             history.sort(key=lambda h: h.time)
-            text = '\n'.join(f'{h.time}, {h.call_type.name:10} - {h.number} ({h.name})' for h in history)
+            text = '\n'.join(f'{h.time}, {h.call_type:10} - {h.number} ({h.name})' for h in history)
             self.teams.messages.create(toPersonId=message.personId,
                                        text=text)
 
