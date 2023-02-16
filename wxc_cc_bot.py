@@ -228,7 +228,7 @@ class CallControlBot(TeamsBot):
         """
 
         @catch_exception
-        def thread_handle(user_id: str, json_data: str):
+        def thread_handle(user_id: str, json_data: dict):
             """
             Actually handle a call event, runs in separate thread.
 
@@ -237,7 +237,7 @@ class CallControlBot(TeamsBot):
             :param json_data: JSON data from the Flask request.
             :type json_data: str
             """
-            log.debug(f'webhook event: {json_data}')
+            log.debug(f'webhook event: {json.dumps(json_data, indent=2)}')
             if not self._token_manager.get_user_context(user_id=user_id):
                 log.warning(f'webhook event: no user context for user id {user_id}')
                 return
